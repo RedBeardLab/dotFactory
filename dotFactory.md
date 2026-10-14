@@ -1,6 +1,6 @@
 # Factory Shape — Specification
 
-Status: **draft v1.18**, frozen for implementation planning. See the
+Status: **draft v1.19**, frozen for implementation planning. See the
 [Changelog](#changelog) for version history.
 
 Scope: the *execution shape* of the factory — modules, triggers, units, steps,
@@ -11,13 +11,17 @@ authentication, UI, persistence and deployment concerns.
 
 ## 1. Summary
 
-A factory is a **root graph** of triggers, steps and sinks. A step invokes a
-**unit** (leaf or composite); a composite unit is a **cyclic dataflow graph** of
-steps. Every connection is a **binding** — a typed value flowing from a producer
-port to a consumer port. Loops and retries are loop-carried (`prev`) bindings.
-The core is a
-pure **interpreter**; everything with behaviour is a consumer-registered
-adapter.
+A factory is a **scope** — a dataflow graph of triggers, steps and sinks — built
+from **nested scopes**: the root, and the body of every composite unit. A step
+invokes a **unit** (leaf or composite); a composite unit is itself a scope (a
+cyclic dataflow graph of steps and sinks). Every connection is a **binding** — a
+typed value flowing from a producer port to a consumer port. Loops and retries
+are loop-carried (`prev`) bindings: a **unit** is a scope and need not loop,
+whereas a **loop** is a unit (or the root) whose graph contains a `prev` cycle.
+Both are evaluated the same way — to quiescence as one firing — but only the
+loop repeats. A scope is evaluated to quiescence as a single firing of the
+node that invokes it, and only its boundary ports cross. The core is a pure
+**interpreter**; everything with behaviour is a consumer-registered adapter.
 
 ## 2. Roles
 
@@ -324,8 +328,8 @@ A **unit** is a named, runnable definition. It is the unit of **reuse and
 import**.
 
 - **`runner:`** → *leaf* unit, executed by a runner's implementation.
-- **nested `step:` entries** → *composite* unit (a workflow), executed by the core
-  engine.
+- **nested `step:` / `sink:` entries** → *composite* unit — a **scope**: a
+  workflow (and, optionally, its effects), executed by the core engine.
 
 A **step** is an **invocation** inside a composite. It is one of:
 
@@ -399,6 +403,10 @@ Rules:
   transitively: recursion is ordinary composite invocation. It must terminate
   through guards (a base-case branch) or the max-firings bound; the spec defines
   no separate recursion limit.
+- **A composite is a scope.** Its body is a cyclic dataflow of steps and sinks;
+  the engine evaluates it to quiescence as a single firing of the invoking step,
+  so only the unit's `out` ports cross the boundary (§10). A `prev` cycle in the
+  body makes the unit a **loop**; it still fires once and yields one result.
 - **Capabilities are ordinary ports.** Folders, MCP servers and network access
   are just (usually optional) ports; how a runner provisions their values is the
   implementation's concern, not the spec's.
@@ -443,8 +451,8 @@ Block fields:
 | `runner` | `kind` (final), `extends?`, implementation config fields (with modifiers) |
 | `trigger` | `kind`, `extends?`, subtype config (`cron`, `board`, …), `out` (types) |
 | `sink` | `kind`, `extends?`, subtype config, `in` (bindings), `when` (exit condition) |
-| `unit` | `runner` **xor** nested `step` entries, `extends?`, `in` (types), `out` (types, or type = binding for a composite), config |
-| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s, config, `in` (bindings), `out` (types)) — valid at the root and inside a composite |
+| `unit` | `runner` **xor** a composite (nested `step` / `sink` entries), `extends?`, `in` (types), `out` (types, or type = binding for a composite), config |
+| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s / `sink`s, config, `in` (bindings), `out` (types)) — valid at the root and inside a composite |
 
 ```ebnf
 module        = { import } { declaration } ;
@@ -459,10 +467,10 @@ param         = ident ":" Type ;
 runner        = "runner" ident ":" block ;     # kind + config
 trigger       = "trigger" ident ":" block ;
 sink          = "sink" ident ":" block ;
-unit          = "unit" ident ":" block ;       # leaf if runner:, composite if nested step: entries
+unit          = "unit" ident ":" block ;       # leaf if runner:, composite if nested step:/sink: entries
 step          = "step" ident ":" block ;       # use: (reference) xor inline unit
 block         = { entry } ;                    # indentation-scoped
-entry         = field | extends | step ;
+entry         = field | extends | step | sink ;
 field         = [ "final" ] ident [ "!" | "?" ] ":" [ Type "=" ] [ value ] ;
 extends       = "extends" qual ;
 
@@ -623,9 +631,9 @@ Lexical rules:
 
 Notes:
 
-- **The root holds Trigger, Step and Sink.** Triggers are sources, sinks are
-  boundary effects, steps are invocations; a composite unit is invoked by a
-  step. Steps also appear inside composites.
+- **The root holds Trigger, Step and Sink; a composite body holds Step and
+  Sink.** Triggers are root-only sources; steps are invocations; sinks are
+  effects and may appear in any scope. A composite unit is invoked by a step.
 - **Reusable boundaries** (`unit`, `runner`, `external port`) declare types;
   **local bindings** (`step.in`, `sink.in`) may infer, or declare an upper bound
   with `name: Type = source`.
@@ -686,6 +694,24 @@ unit run_tests:
 
 ## 10. Execution & concurrency
 
+**Scopes.** Execution is defined over **scopes**. A scope is a dataflow graph
+with boundary ports: the **root** (seeded by its trigger; no `in`), or the body
+of a **composite** step (its `in` / `out` ports). A scope's nodes are its steps
+and sinks. A scope need not loop — but when its graph contains a `prev` cycle
+(§10.1) it is a **loop**. Every scope, looping or not, is evaluated the same
+way: to quiescence, as one firing of the node that invokes it.
+
+**A scope runs to quiescence as one firing.** A scope is evaluated once per
+firing of the node that invokes it: the root once per Run (when its trigger
+fires), a composite step once per firing of that step. Evaluation fires the
+scope's nodes until none is enabled. **Only the boundary ports cross**: the
+firings of nodes inside a scope are not visible outside it, so invoking a
+composite step is a *single* firing that yields the scope's `out` values once.
+A node's dependencies are its **sibling nodes within the same scope** (below); a
+binding may not name a node in another scope. This is what makes an effect
+*inside* a loop's scope fire on every pass, while an effect *downstream of the
+scope* fires once per invocation of that scope (here, once — §10.2).
+
 - **Triggers fire once, at admission.** A Run begins when its trigger fires: the
   host supplies the trigger's `out` values (the **seed**), which are checked at
   admission (§4, §11) and then held constant for the whole Run. The trigger
@@ -701,17 +727,21 @@ unit run_tests:
   the first firing. A binding whose source is absent is **dropped** without
   gating: an optional (`?`) or undeclared input that is unsatisfied simply does
   not constrain the node.
-- **Sink enablement.** A sink fires when its `when` holds, no binding has a
-  present source with a false guard, and every input is satisfied: a present
-  source, or an absent source the binding marks `?`. An absent **optional** (`?`)
-  input is **dropped** — the sink still fires, and the input carries no value (the
+- **Sink enablement.** A sink may appear in any scope (§7) and fires within that
+  scope's fixpoint: a sink inside a loop's scope fires on each pass, one
+  downstream of the scope fires once (§10.2). A sink fires when its `when` holds,
+  no binding has a present source with a false guard, and every input is
+  satisfied: a present source, or an absent source the binding marks `?`. An
+  absent **optional** (`?`) input is **dropped** — the sink still fires, and the
+  input carries no value (the
   `file` sink receives `None`, §4.1) — whereas an absent non-optional input
   disables the sink. That is how `result` and `skipped` in `examples/absence`
   stay mutually exclusive. A sink fires once per enablement like any node and is
   not a binding source (§5). A sink with inputs must have at least one required
   input (§11), so an absent optional is never the node's only reason to fire.
 - **Fire on upstream firing.** A node fires when it is enabled and at least one
-  of its **dependencies** — a binding source or a guard reference (below) — has
+  of its **dependencies** — a **sibling** node's port (a binding source) or a
+  guard reference (below) within the same scope — has
   fired since this node last fired, or it has never fired. Firing is driven by
   **upstream firing, not value equality**: a node re-fires even when a re-fired
   source yields the same value. A firing's outputs are **latest-wins** per port.
@@ -745,8 +775,9 @@ unit run_tests:
   its value, thread `terminated_at` (or any value). Every dependency carries a
   value (a guard reads one). A skipped step has no `terminated_at`, so ordering
   edges out of it skip coherently too.
-- **Loops and retries.** A loop is a **cycle of bindings** closed by a `prev`
-  edge — there is no seed primitive and no `while`/`for`. The `prev` edge is
+- **Loops and retries.** A loop is a **scope whose graph contains a cycle**
+  closed by a `prev` edge — there is no seed primitive and no `while`/`for`; the
+  scope still runs to quiescence and yields its `out` once. The `prev` edge is
   inactive on the first pass, so the loop starts; from the second pass it gates
   on its producer and re-fires the node each time that producer fires. A loop is
   **bounded by a guard that disables a node when the budget is reached**:
@@ -756,7 +787,8 @@ unit run_tests:
   branch reads `plan.attempt >= 3`. (A budget may instead be a loop-carried value
   or an adapter-provided external port, §3.) An **unguarded cycle never quiesces**
   and is aborted by the max-firings bound.
-- **Termination.** A Run ends at **quiescence** — no node is enabled — or is
+- **Termination.** A scope ends at **quiescence** — no node in it is enabled;
+  the Run ends when the root quiesces — or is
   aborted by the max-firings bound. Value equality is irrelevant: a cycle does
   not converge on its own, so termination is the author's concern — a loop ends
   only when a guard disables a node in it, or the bound is hit. The spec fixes no
@@ -767,8 +799,8 @@ unit run_tests:
   Run**. A **node failure** is ordinary data: a step that wants to report failure
   writes it to an `out` port (an author-defined type), and the factory handles it
   with guards and sinks. The engine interprets neither as "success" or "failure."
-- **Silence aborts.** A Run that reaches quiescence having fired **no** sink
-  **aborts**. On abort — the max-firings bound, a system error, or silence — the
+- **Silence aborts.** A Run that reaches quiescence having fired **no** sink (in
+  any scope) **aborts**. On abort — the max-firings bound, a system error, or silence — the
   reserved `abort` source becomes available and the engine runs one final pass
   (the **abort pass**): sinks reading `abort.*` fire. The abort pass fires
   **sinks only** — it never runs a step or enables further work — then the Run
@@ -778,7 +810,7 @@ unit run_tests:
   built-in failure sink is required. The bound is the implementation's choice
   (§11).
 - **Outcome.** A `done` Run's outcome is the **set of distinct sinks that fired**
-  (unordered). A sink may fire more than once — a sink downstream of a
+  (in any scope; unordered). A sink may fire more than once — a sink downstream of a
   loop fires on each pass — and every firing is a separate step (its own
   `this.metadata.step.id`), but the outcome names each sink once. An aborted Run's
   status is **aborted**; any sinks that fired (including abort-routed ones) are
@@ -831,14 +863,16 @@ step plan:
 
 Reusing the §4 `Issue` and `Verdict` types and a per-Run retry port (§6, §10).
 
-**A retry loop with a per-pass effect.** `plan` marks its feedback binding
-`prev`, so the edge is loop-carried: `plan` fires once, then re-fires each pass
-`review` fires. The guard on the feedback binding disables `plan` once the
-budget is spent (or the verdict is approved), which ends the loop. `progress`
-reads a looping node, so it fires on every pass.
+**A retry loop with a per-pass effect.** The loop is the *body of* `deliver` — a
+scope whose graph contains a `prev` cycle. `plan` fires once, then re-fires each
+pass `review` fires; the guard on the feedback binding disables `plan` once the
+budget is spent (or the verdict is approved), which ends the loop. `deliver`
+itself fires once and yields one `verdict`. The `progress` sink sits *inside* the
+scope, next to the loop, so it fires on every pass; `succeeded` / `failed` sit
+*downstream of* the scope, so each fires once (when its `when` holds).
 
 ```
-unit deliver:
+unit deliver:                       # the loop's scope: fires once, yields one verdict
   in:  { ticket: Issue }
   out: { verdict: Verdict = review.verdict }
 
@@ -856,6 +890,11 @@ unit deliver:
     in:  { plan: plan.plan }
     out: { verdict: Verdict }
 
+  sink progress:                    # inside the scope: fires once per pass
+    kind: webhook
+    in: { attempt: plan.attempt,
+          plan:    plan.plan }
+
 trigger manual_ticket:
   kind: manual
   out: { ticket: Issue }
@@ -864,22 +903,17 @@ step run:
   use: deliver
   in:  { ticket: manual_ticket.ticket }
 
-sink progress:                      # a sink in a loop: fires once per pass
-  kind: webhook
-  in: { attempt: plan.attempt,
-        plan:    plan.plan }
-
-sink succeeded:                     # the loop's success branch
+sink succeeded:                     # downstream of the scope: fires once
   kind: file
   path: "out/succeeded.json"
-  in:  { verdict: review.verdict }
-  when: review.verdict is succeeded
+  in:  { verdict: run.verdict }
+  when: run.verdict is succeeded
 
-sink failed:                        # the budget-exhausted branch
+sink failed:
   kind: file
   path: "out/failed.json"
-  in:  { verdict: review.verdict }
-  when: review.verdict is failed
+  in:  { verdict: run.verdict }
+  when: run.verdict is failed
 ```
 
 If `progress` fires on three passes and `succeeded` once, the Run's outcome is
@@ -922,8 +956,9 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
   through explicit imports.
 - Every referenced declaration resolves (type, unit, runner, trigger, sink,
   external port) across modules.
-- Every binding source and guard path resolves statically: the root names a
-  visible node (`in` / `out` / `abort` / `this`, a trigger, or a sibling step),
+- Every binding source and guard path resolves statically: the enclosing scope
+  names a visible node (`in` / `out` / `abort` / `this`, a root trigger, or a
+  sibling step),
   the first segment names a declared port on that node (`terminated_at` and
   `attempt` are implicit on every trigger/step and take no subfields), and each
   further segment resolves against the port's declared type (record field, numeric
@@ -933,7 +968,7 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
   An external-port call binds exactly
   its declared params. Anything else is a spec error at load time; the only
   runtime absence is a declared optional (`?`) port left unproduced.
-- Gating is explicit: within a composite (or the root), a binding's dependencies
+- Gating is explicit: within a scope, a binding's dependencies
   are the sibling nodes its **source** and its **guard** reference (a guard's
   reference to the node's own name is not a dependency); the bindings **not**
   marked `prev` form a directed acyclic graph, and every `prev` binding lies on a
@@ -965,6 +1000,10 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 - Bare `out:` subsetting: what supplies a port declared with no `=`.
 - Referencing a sink's `terminated_at` to order work after an effect: sinks are
   effect nodes that fire, but are not yet binding sources.
+- The abort pass across scopes: whether an abort fires abort-routed sinks in
+  every scope, or only in the scope where it occurred.
+- Consolidating `use:`-recursion with `prev` iteration, now that every unit is a
+  scope that runs to quiescence — whether recursion is still needed.
 
 ## Appendix A — Worked example (multi-file)
 
@@ -1205,6 +1244,12 @@ sink aborted:
 
 ## Changelog
 
+- **v1.19** — execution is defined over **scopes**. A scope (the root, or a
+  composite body) runs to quiescence as one firing, and only its boundary ports
+  cross; a unit is a scope, and it need not loop — a loop is a scope whose graph
+  contains a `prev` cycle. Sinks may appear in any scope, so a per-pass
+  effect sits inside the loop's scope and a once-only effect sits downstream of
+  it. Fixed §10.2, whose sinks referenced nodes in another scope.
 - **v1.18** — every receiver (port, leaf, sink) gets a secret as a secret, so it
   knows; the receiver unwraps it to use it and reports the marker.
 - **v1.17** — a boolean context requires a `bool`; no truthiness of numbers or
