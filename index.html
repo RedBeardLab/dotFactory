@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dotFactory — a language for describing workflows</title>
+<meta name="description" content="dotFactory is a small language for agentic workflows: typed data flowing through triggers, steps and sinks. A spec, not a runtime.">
+<meta property="og:title" content="dotFactory — describe the workflow, not the implementation">
+<meta property="og:description" content="A small language for automations with and without AI agents: typed data flowing through triggers, steps and sinks. A spec, not a runtime.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='4' cy='12' r='3' fill='%233b82f6'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%2364748b'/%3E%3Ccircle cx='20' cy='12' r='3' fill='%2316a34a'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #111827;
+    --muted: #5b6472;
+    --faint: #8b95a5;
+    --line: #e6e8ec;
+    --soft: #f7f8fa;
+    --card: #ffffff;
+    --accent: #0b5fff;
+
+    --trigger: #3b82f6;
+    --step: #64748b;
+    --sink: #16a34a;
+    --loop: #f59e0b;
+    --port: #8b5cf6;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --maxw: 74rem;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 16px/1.6 var(--sans);
+    color: var(--ink);
+    background: var(--card);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; }
+  h2 { font-size: clamp(1.5rem, 3vw, 2.1rem); margin: 0 0 .5rem; }
+  h3 { font-size: 1.02rem; margin: 0 0 .35rem; }
+  p { margin: 0 0 1rem; }
+  code { font-family: var(--mono); font-size: .88em; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 1.5rem; }
+  .narrow { max-width: 46rem; }
+  .lede { font-size: 1.1rem; color: var(--muted); }
+  .kicker {
+    font-size: .72rem; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 .8rem;
+  }
+  section { padding: 4.5rem 0; border-top: 1px solid var(--line); scroll-margin-top: 4.25rem; }
+  section:first-of-type { border-top: 0; }
+
+  /* ---------- nav ---------- */
+  header.nav {
+    position: sticky; top: 0; z-index: 20;
+    backdrop-filter: saturate(1.4) blur(8px);
+    background: rgba(255,255,255,.86);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    max-width: var(--maxw); margin: 0 auto; padding: .7rem 1.5rem;
+    display: flex; align-items: center; gap: 1.4rem;
+  }
+  .brand { font-weight: 750; letter-spacing: -.02em; display: flex; align-items: center; gap: .5rem; }
+  .brand svg { display: block; }
+  .nav-links { margin-left: auto; display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: .9rem; }
+  .nav-links a { color: var(--muted); }
+  .nav-links a:hover { color: var(--ink); text-decoration: none; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 4.5rem 0 3rem; }
+  .hero h1 {
+    font-size: clamp(2.1rem, 5.5vw, 3.6rem);
+    margin: 0 0 1rem; max-width: 20ch;
+  }
+  .hero .lede { max-width: 44rem; font-size: clamp(1.05rem,2vw,1.25rem); }
+  .chips { display: flex; flex-wrap: wrap; gap: .45rem; margin: 1.6rem 0 1.9rem; }
+  .chip {
+    font-family: var(--mono); font-size: .78rem; color: var(--muted);
+    background: var(--soft); border: 1px solid var(--line);
+    padding: .22rem .6rem; border-radius: 999px;
+  }
+  .btns { display: flex; flex-wrap: wrap; gap: .7rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: .5rem;
+    padding: .62rem 1.05rem; border-radius: 9px; font-weight: 600; font-size: .92rem;
+    border: 1px solid var(--line); color: var(--ink); background: var(--card);
+  }
+  .btn:hover { text-decoration: none; border-color: #cbd0d8; }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.primary:hover { background: #000; }
+  .note { font-size: .85rem; color: var(--faint); margin-top: 1.2rem; }
+
+  /* ---------- generic flow pills ---------- */
+  .flow { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: .45rem;
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: .5rem .8rem; font-size: .86rem; font-weight: 600; background: #fff;
+    white-space: nowrap;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--step); }
+  .pill.trigger { border-color: color-mix(in srgb, var(--trigger) 40%, var(--line)); }
+  .pill.trigger .dot { background: var(--trigger); }
+  .pill.step .dot { background: var(--step); }
+  .pill.sink { border-color: color-mix(in srgb, var(--sink) 40%, var(--line)); }
+  .pill.sink .dot { background: var(--sink); }
+  .pill.port { border-color: color-mix(in srgb, var(--port) 40%, var(--line)); }
+  .pill.port .dot { background: var(--port); }
+  .pill.muted { color: var(--muted); font-weight: 500; }
+  .arrow { color: var(--faint); font-weight: 700; }
+  .arrow.back { color: var(--loop); }
+
+  /* ---------- hero preview ---------- */
+  .preview {
+    margin-top: 2.6rem; border: 1px solid var(--line); border-radius: 14px;
+    background: linear-gradient(180deg,#fdfdff,#f7f8fa); padding: 1.5rem 1.4rem;
+  }
+  .preview .flow { justify-content: flex-start; }
+  .preview .caption { font-size: .8rem; color: var(--faint); margin-top: 1rem; font-family: var(--mono); }
+
+  /* ---------- two column ---------- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2.2rem; }
+  .panel { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1.3rem 1.4rem; }
+  .panel h3 { font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .panel ul { margin: .3rem 0 0; padding-left: 1.1rem; }
+  .panel li { margin: .3rem 0; }
+  .strike { color: var(--faint); }
+  .strike code { text-decoration: line-through; }
+  blockquote {
+    margin: 2.4rem 0 0; padding: 0 0 0 1.1rem; border-left: 3px solid var(--ink);
+    font-size: 1.25rem; line-height: 1.45; letter-spacing: -.01em; max-width: 40rem;
+  }
+
+  /* ---------- vocab ---------- */
+  .vocab { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-top: 2rem; }
+  .vcard { border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.1rem 1.2rem; background: #fff; }
+  .vcard .top { display: flex; align-items: center; gap: .55rem; margin-bottom: .55rem; }
+  .vcard .glyph {
+    width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+    font-family: var(--mono); font-size: .8rem; font-weight: 700; color: #fff;
+  }
+  .vcard h3 { margin: 0; font-size: .98rem; }
+  .vcard p { font-size: .87rem; color: var(--muted); margin: .4rem 0 .7rem; }
+  .vcard pre { margin: 0; }
+  .g-type { background: var(--step); }
+  .g-trigger { background: var(--trigger); }
+  .g-step { background: #475569; }
+  .g-runner { background: #0f766e; }
+  .g-bind { background: #2563eb; }
+  .g-loop { background: var(--loop); }
+  .g-sink { background: var(--sink); }
+  .g-port { background: var(--port); }
+
+  pre {
+    background: #0f1420; color: #e6edf3; border-radius: 10px;
+    padding: .85rem 1rem; overflow-x: auto; font-family: var(--mono);
+    font-size: .8rem; line-height: 1.55; margin: 0;
+  }
+  pre .kw { color: #ff9e64; }
+  pre .ty { color: #7ee787; }
+  pre .st { color: #a5d6ff; }
+  pre .cm { color: #7d8590; }
+  pre .fn { color: #d2a8ff; }
+  pre .dim { color: #7d8590; }
+
+  /* ---------- anatomy / walkthrough ---------- */
+  .stages { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1.8rem 0 1.3rem; }
+  .stage-btn {
+    font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--muted);
+    padding: .4rem .8rem; border-radius: 999px;
+  }
+  .stage-btn:hover { color: var(--ink); }
+  .stage-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .anatomy { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1.5rem; align-items: start; }
+  .codebox {
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #0f1420;
+  }
+  .codebox .bar {
+    display: flex; align-items: center; gap: .45rem; padding: .5rem .8rem;
+    background: #161c2b; border-bottom: 1px solid #232b3d;
+    font-family: var(--mono); font-size: .74rem; color: #8b95a5;
+  }
+  .codebox .bar i { width: 9px; height: 9px; border-radius: 50%; background: #2d3548; }
+  .codebox .code { padding: .7rem 0; overflow-x: auto; }
+  .cl {
+    font-family: var(--mono); font-size: .79rem; line-height: 1.5;
+    padding: .08rem 1rem .08rem 1rem; white-space: pre; color: #d7dde7;
+    border-left: 2px solid transparent; transition: background .15s, border-color .15s;
+  }
+  .cl .ln { display: inline-block; width: 1.6rem; color: #4a5568; user-select: none; }
+  .cl[data-stage] { cursor: pointer; }
+  .cl.on { background: rgba(11,95,255,.16); border-left-color: var(--accent); }
+  .cl.hover { background: rgba(255,255,255,.05); }
+  .cl .kw { color: #ff9e64; }
+  .cl .ty { color: #7ee787; }
+  .cl .st { color: #a5d6ff; }
+  .cl .cm { color: #7d8590; }
+  .cl .fn { color: #d2a8ff; }
+  .cl .key { color: #79c0ff; }
+
+  .explain { border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem 1.3rem; background: #fff; position: sticky; top: 4.5rem; }
+  .explain .tag { font-family: var(--mono); font-size: .72rem; color: var(--accent); font-weight: 700; letter-spacing: .06em; }
+  .explain h3 { margin: .45rem 0 .5rem; font-size: 1.2rem; }
+  .explain p { font-size: .92rem; color: var(--muted); margin: 0; }
+  .explain .hint { margin-top: 1rem; font-size: .78rem; color: var(--faint); }
+
+  /* ---------- run animation ---------- */
+  .runner { border: 1px solid var(--line); border-radius: 14px; padding: 1.4rem; margin-top: 2rem; background: linear-gradient(180deg,#fdfdff,#f8f9fb); }
+  .diagram { display: flex; flex-direction: column; gap: 1.6rem; }
+  .lane { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .node {
+    position: relative; border: 1px solid var(--line); background: #fff; border-radius: 10px;
+    padding: .55rem .85rem; font-size: .85rem; font-weight: 650; min-width: 74px; text-align: center;
+    transition: box-shadow .25s, border-color .25s, transform .25s, background .25s;
+  }
+  .node small { display: block; font-weight: 500; font-size: .68rem; color: var(--faint); font-family: var(--mono); }
+  .node.n-trigger { border-color: color-mix(in srgb, var(--trigger) 45%, var(--line)); }
+  .node.n-sink { border-color: color-mix(in srgb, var(--sink) 45%, var(--line)); }
+  .node.n-port { border-color: color-mix(in srgb, var(--port) 45%, var(--line)); }
+  .node.hot { box-shadow: 0 0 0 3px rgba(11,95,255,.25); border-color: var(--accent); transform: translateY(-1px); }
+  .node.done { background: #f0fdf4; border-color: #86efac; }
+  .node.sinklit { background: #ecfdf5; border-color: var(--sink); box-shadow: 0 0 0 3px rgba(22,163,74,.18); }
+  .cap { border-style: dashed; }
+  .wire { flex: 1; min-width: 26px; height: 2px; background: repeating-linear-gradient(90deg,#cfd6e0 0 6px,transparent 6px 11px); position: relative; border-radius: 2px; transition: background .2s; }
+  .wire::after { content: ""; position: absolute; right: -1px; top: -3px; border: 4px solid transparent; border-left-color: #cfd6e0; transition: border-color .2s; }
+  .wire.hot { background: linear-gradient(90deg, var(--accent), #7aa7ff); }
+  .wire.hot::after { border-left-color: #7aa7ff; }
+  .wire.back { background: repeating-linear-gradient(90deg, color-mix(in srgb,var(--loop) 60%, #fff) 0 6px, transparent 6px 11px); }
+  .wire.back::after { border-left-color: var(--loop); }
+  .wire.back.hot { background: linear-gradient(90deg, var(--loop), #fcd34d); }
+  .wire.back.hot::after { border-left-color: #fcd34d; }
+  .feedback { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; font-size: .76rem; margin-left: 2rem; }
+  .feedback .fb-node { font-weight: 650; color: var(--ink); font-size: .8rem; }
+  .feedback .fb-line {
+    color: var(--loop); font-family: var(--mono); font-size: .78rem; letter-spacing: .04em;
+    border-bottom: 2px dashed color-mix(in srgb, var(--loop) 55%, #fff);
+    padding-bottom: 3px; transition: color .2s, border-color .2s;
+  }
+  .feedback .fb-line.hot { color: #b45309; border-bottom-color: #b45309; }
+  .feedback .fb-note { color: var(--faint); font-family: var(--mono); font-size: .74rem; }
+  .caps { display: flex; gap: .6rem; flex-wrap: wrap; font-size: .76rem; color: var(--muted); font-family: var(--mono); }
+  .console { margin-top: 1.3rem; background: #0f1420; border-radius: 10px; padding: .8rem 1rem; font-family: var(--mono); font-size: .78rem; color: #cbd5e1; min-height: 8.5rem; }
+  .console .row { opacity: .25; transition: opacity .2s, color .2s; }
+  .console .row.show { opacity: 1; }
+  .console .row.ok { color: #7ee787; }
+  .console .row.warn { color: #fcd34d; }
+  .console .row .t { color: #4a5568; }
+  .run-controls { display: flex; gap: .6rem; align-items: center; margin-top: 1.2rem; flex-wrap: wrap; }
+  .run-controls .status { font-size: .82rem; color: var(--muted); font-family: var(--mono); }
+  .counter { font-family: var(--mono); font-size: .78rem; color: var(--faint); }
+  .counter b { color: var(--sink); }
+
+  /* ---------- host / portability ---------- */
+  .hosts { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1.4rem; align-items: center; margin-top: 2rem; }
+  .hostbox { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; }
+  .hostbox ul { list-style: none; margin: 0; padding: 0; }
+  .hostbox li { padding: .45rem 0; border-bottom: 1px dashed var(--line); font-size: .88rem; }
+  .hostbox li:last-child { border-bottom: 0; }
+  .mockfile { font-family: var(--mono); font-size: .8rem; background: #0f1420; color: #e6edf3; border-radius: 12px; padding: 1rem 1.1rem; }
+  .mockfile .badge { color: #7d8590; }
+
+  /* ---------- try ---------- */
+  .trycode { margin-top: 1.6rem; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.8rem; }
+  .stepcard { border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem; }
+  .stepcard .num { font-family: var(--mono); font-size: .75rem; color: var(--accent); font-weight: 700; }
+  .stepcard h3 { margin: .4rem 0 .3rem; font-size: .98rem; }
+  .stepcard p { font-size: .85rem; color: var(--muted); margin: 0; }
+
+  /* ---------- footer ---------- */
+  footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; background: var(--soft); }
+  footer .grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 2rem; }
+  footer h3 { font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  footer ul { list-style: none; margin: 0; padding: 0; font-size: .9rem; }
+  footer li { margin: .35rem 0; }
+  footer .fine { margin-top: 2.5rem; font-size: .8rem; color: var(--faint); }
+
+  @media (max-width: 860px) {
+    .cols, .anatomy, .hosts, .steps, .vocab, footer .grid { grid-template-columns: 1fr; }
+    .vocab { grid-template-columns: 1fr 1fr; }
+    .explain { position: static; }
+    section { padding: 3rem 0; }
+  }
+  @media (max-width: 560px) {
+    .vocab { grid-template-columns: 1fr; }
+    .nav-links { gap: .8rem; font-size: .82rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="4" cy="12" r="2.4" fill="#3b82f6"/>
+        <circle cx="12" cy="12" r="2.4" fill="#64748b"/>
+        <circle cx="20" cy="12" r="2.4" fill="#16a34a"/>
+        <path d="M6.4 12h3.2M14.4 12h3.2" stroke="#cbd0d8" stroke-width="1.6"/>
+      </svg>
+      dotFactory
+    </a>
+    <nav class="nav-links">
+      <a href="#why">Why</a>
+      <a href="#shape">The shape</a>
+      <a href="#anatomy">Anatomy</a>
+      <a href="#run">See it run</a>
+      <a href="#host">Hosts</a>
+      <a href="#try">Try it</a>
+      <a href="https://github.com/RedBeardLab/dotFactory">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ================= HERO ================= -->
+  <section class="hero">
+    <div class="wrap">
+      <p class="kicker">A spec, not a runtime</p>
+      <h1>Describe the workflow.<br>Not the implementation.</h1>
+      <p class="lede">
+        dotFactory is a small language for automations with and without AI agents.
+        You write the <em>dataflow</em> — typed values moving through triggers,
+        steps and sinks — and leave the object models, async runtimes and
+        dependency-injection frameworks behind.
+      </p>
+      <div class="chips">
+        <span class="chip">types</span>
+        <span class="chip">triggers</span>
+        <span class="chip">steps</span>
+        <span class="chip">runners</span>
+        <span class="chip">bindings</span>
+        <span class="chip">loops</span>
+        <span class="chip">sinks</span>
+        <span class="chip">external ports</span>
+      </div>
+      <div class="btns">
+        <a class="btn primary" href="#run">▶ See it run</a>
+        <a class="btn" href="#anatomy">Read the code</a>
+        <a class="btn" href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md">The spec</a>
+      </div>
+      <p class="note">No runtime to install. No platform to sign up for. The interface is the deliverable.</p>
+
+      <div class="preview">
+        <div class="flow">
+          <span class="pill trigger"><span class="dot"></span>start</span>
+          <span class="arrow">→</span>
+          <span class="pill step"><span class="dot"></span>run</span>
+          <span class="arrow">→</span>
+          <span class="pill sink"><span class="dot"></span>result</span>
+          <span class="arrow back" title="feedback">⟲</span>
+          <span class="pill muted">retries under the hood</span>
+        </div>
+        <p class="caption">one ticket in&nbsp;&nbsp;·&nbsp;&nbsp;one result out&nbsp;&nbsp;·&nbsp;&nbsp;a review loop in between</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= WHY ================= -->
+  <section id="why">
+    <div class="wrap">
+      <p class="kicker">The problem</p>
+      <h2>You are thinking in dataflow. You are writing everything else.</h2>
+      <p class="lede narrow" style="margin-bottom:2.2rem">
+        A trigger feeds a step, the step calls an agent, the output feeds another
+        step, maybe a retry, then a sink. That picture is simple. But the moment
+        you open an editor, the language makes you manage machinery that has
+        nothing to do with it.
+      </p>
+      <div class="cols">
+        <div class="panel">
+          <h3>What you actually mean</h3>
+          <ul>
+            <li>The trigger admits a ticket.</li>
+            <li>The step drafts a result.</li>
+            <li>The reviewer approves or sends it back.</li>
+            <li>The sink writes the file.</li>
+          </ul>
+        </div>
+        <div class="panel strike">
+          <h3>What the language asks about</h3>
+          <ul>
+            <li><code>class</code> hierarchies &amp; metaclasses</li>
+            <li>interface satisfaction &amp; goroutine lifecycle</li>
+            <li>ownership, borrowing, lifetimes</li>
+            <li>the event loop, the DI wiring, the framework</li>
+          </ul>
+        </div>
+      </div>
+      <blockquote>
+        When the language fits the domain, the code becomes a direct
+        translation of intent. Everything else follows from that.
+      </blockquote>
+    </div>
+  </section>
+
+  <!-- ================= THE SHAPE / VOCAB ================= -->
+  <section id="shape">
+    <div class="wrap">
+      <p class="kicker">The whole vocabulary</p>
+      <h2>Eight concepts. No spare parts.</h2>
+      <p class="lede narrow">
+        Every idea earns its place by being needed to describe how work flows
+        through a graph. This is the entire language.
+      </p>
+      <div class="vocab">
+        <div class="vcard">
+          <div class="top"><span class="glyph g-type">T</span><h3>Type</h3></div>
+          <p>Structural records. Fields and shapes — no classes, inheritance, or constructors.</p>
+          <pre><span class="kw">type</span> Ticket = { key: <span class="ty">text</span> }</pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-trigger">▶</span><h3>Trigger</h3></div>
+          <p>Admits one seed value and holds it constant for the whole run. The host supplies the kind.</p>
+          <pre><span class="kw">trigger</span> start:
+  kind: <span class="st">manual</span></pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-step">▸</span><h3>Step</h3></div>
+          <p>Where work happens. Invokes a unit and binds its typed outputs.</p>
+          <pre><span class="kw">step</span> draft:
+  runner: agent</pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-runner">⚙</span><h3>Runner</h3></div>
+          <p>How a step runs: a shell command, a container, or an agent behind a typed interface.</p>
+          <pre><span class="kw">runner</span> agent:
+  kind: <span class="st">opencode</span></pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-bind">↦</span><h3>Binding</h3></div>
+          <p>Named edges that move values between ports. The bindings <em>are</em> the program.</p>
+          <pre>in: { ticket: in.ticket }</pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-loop">⟲</span><h3>Loop</h3></div>
+          <p>A <code>prev</code> (loop-carried) binding re-fires a step with feedback — a retry, not control flow.</p>
+          <pre><span class="kw">prev</span> feedback: review.result</pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-sink">■</span><h3>Sink</h3></div>
+          <p>An effect. Inside a loop it fires each pass; downstream it fires once.</p>
+          <pre><span class="kw">sink</span> result:
+  kind: <span class="st">file</span></pre>
+        </div>
+        <div class="vcard">
+          <div class="top"><span class="glyph g-port">⇥</span><h3>External port</h3></div>
+          <p>A bridge to the outside, implemented by the host. Secrets are opaque — redacted everywhere.</p>
+          <pre><span class="kw">external port</span> credential
+  (key: <span class="ty">text</span>) -&gt; <span class="ty">secret</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ANATOMY ================= -->
+  <section id="anatomy">
+    <div class="wrap">
+      <p class="kicker">Anatomy of a factory</p>
+      <h2>One screen of code, read top to bottom.</h2>
+      <p class="lede narrow">
+        The smallest factory that still shows the three things a factory is for:
+        a credential, an agent runner, and a review loop with a bounded retry.
+        <strong>Pick a part</strong> to see what it does.
+      </p>
+
+      <div class="stages" id="stages">
+        <button class="stage-btn" data-stage="types">Types</button>
+        <button class="stage-btn" data-stage="port">Secret port</button>
+        <button class="stage-btn" data-stage="runner">Runner</button>
+        <button class="stage-btn" data-stage="trigger">Trigger</button>
+        <button class="stage-btn" data-stage="loop">Loop</button>
+        <button class="stage-btn" data-stage="steps">Retry steps</button>
+        <button class="stage-btn" data-stage="sinks">Sinks</button>
+      </div>
+
+      <div class="anatomy">
+        <div class="codebox">
+          <div class="bar"><i></i><i></i><i></i><span style="margin-left:.5rem">minimal.fct</span></div>
+          <div class="code" id="code">
+            <div class="cl" data-stage="types"><span class="ln"> 1</span><span class="cm"># the data that flows</span></div>
+            <div class="cl" data-stage="types"><span class="ln"> 2</span><span class="kw">type</span> Ticket = { key: <span class="ty">text</span>, title: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="types runner"><span class="ln"> 3</span><span class="kw">type</span> AgentCall = { token: <span class="ty">secret</span>, prompt: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="port"><span class="ln"> 4</span><span class="kw">external port</span> credential(key: <span class="ty">text</span>) -&gt; <span class="ty">secret</span></div>
+            <div class="cl" data-stage="runner"><span class="ln"> 5</span><span class="kw">runner</span> agent:</div>
+            <div class="cl" data-stage="runner"><span class="ln"> 6</span>  kind: <span class="st">opencode</span></div>
+            <div class="cl" data-stage="runner"><span class="ln"> 7</span>  in:   AgentCall</div>
+            <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> start:</div>
+            <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">manual</span></div>
+            <div class="cl" data-stage="trigger types"><span class="ln">10</span>  out: { ticket: Ticket }</div>
+            <div class="cl" data-stage="loop"><span class="ln">11</span><span class="kw">loop</span> build:</div>
+            <div class="cl" data-stage="loop types"><span class="ln">12</span>  in:  { ticket: Ticket }</div>
+            <div class="cl" data-stage="loop"><span class="ln">13</span>  out:</div>
+            <div class="cl" data-stage="loop"><span class="ln">14</span>    result:   <span class="ty">text</span> = review.result</div>
+            <div class="cl" data-stage="loop"><span class="ln">15</span>    approved: <span class="ty">bool</span> = review.approved</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">16</span>  <span class="kw">step</span> draft:</div>
+            <div class="cl" data-stage="steps runner"><span class="ln">17</span>    runner: agent</div>
+            <div class="cl" data-stage="steps"><span class="ln">18</span>    in:</div>
+            <div class="cl" data-stage="steps"><span class="ln">19</span>      prompt: <span class="st">"Draft a one-line result."</span></div>
+            <div class="cl" data-stage="steps"><span class="ln">20</span>      ticket: in.ticket</div>
+            <div class="cl" data-stage="steps port"><span class="ln">21</span>      token:  credential(key: <span class="st">"opencode"</span>)</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">22</span>      <span class="kw">prev</span> feedback: review.result <span class="kw">if</span> <span class="fn">not</span> review.approved <span class="kw">and</span> draft.attempt &lt; 3</div>
+            <div class="cl" data-stage="steps"><span class="ln">23</span>    out: { draft: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">24</span>  <span class="kw">step</span> review:</div>
+            <div class="cl" data-stage="steps runner"><span class="ln">25</span>    runner: agent</div>
+            <div class="cl" data-stage="steps"><span class="ln">26</span>    in: { prompt: <span class="st">"Approve the draft."</span>, text: draft.draft }</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">27</span>    out: { approved: <span class="ty">bool</span>, result: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">28</span>  <span class="kw">sink</span> progress:</div>
+            <div class="cl" data-stage="sinks steps"><span class="ln">29</span>    kind: <span class="st">file</span>  path: <span class="st">"out/progress.json"</span></div>
+            <div class="cl" data-stage="sinks steps"><span class="ln">30</span>    in: { attempt: draft.attempt, draft: draft.draft }</div>
+            <div class="cl" data-stage="loop"><span class="ln">31</span><span class="kw">step</span> run:</div>
+            <div class="cl" data-stage="loop"><span class="ln">32</span>  use: build</div>
+            <div class="cl" data-stage="loop trigger"><span class="ln">33</span>  in: { ticket: start.ticket }</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">34</span><span class="kw">sink</span> result:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">35</span>  kind: <span class="st">file</span>  path: <span class="st">"out/result.json"</span></div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">36</span>  in: { result: run.result, approved: run.approved }</div>
+          </div>
+        </div>
+
+        <aside class="explain" id="explain">
+          <!-- filled by JS -->
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RUN ================= -->
+  <section id="run">
+    <div class="wrap">
+      <p class="kicker">The execution model</p>
+      <h2>A run is a round of firings until nothing can fire.</h2>
+      <p class="lede narrow">
+        Press play. The trigger admits a ticket, the loop runs <code>draft →
+        review</code>, the reviewer sends the draft back once, then approves.
+        The <code>progress</code> sink fires <strong>inside</strong> the loop —
+        once per pass — while <code>result</code> waits downstream and fires
+        <strong>once</strong>.
+      </p>
+
+      <div class="runner">
+        <div class="diagram">
+          <div class="lane">
+            <span class="caps">uses</span>
+            <span class="node n-port cap" data-node="port">credential <small>port → secret</small></span>
+            <span class="node cap" data-node="runner">agent <small>opencode</small></span>
+          </div>
+
+          <div class="lane">
+            <span class="node n-trigger" data-node="start">start <small>trigger</small></span>
+            <span class="wire" id="w-start-draft"></span>
+            <span class="node" data-node="draft">draft <small>step</small></span>
+            <span class="wire" id="w-draft-review"></span>
+            <span class="node" data-node="review">review <small>step</small></span>
+            <span class="wire" id="w-review-result"></span>
+            <span class="node n-sink" data-node="result">result <small>sink</small></span>
+          </div>
+
+          <div class="feedback">
+            <span class="fb-node">draft</span>
+            <span class="fb-line" id="w-feedback">⟵ prev feedback ⟵</span>
+            <span class="fb-node">review</span>
+            <span class="fb-note">re-fires while not approved &amp; under 3 attempts</span>
+          </div>
+
+          <div class="lane">
+            <span class="caps">in loop</span>
+            <span class="node n-sink" data-node="progress">progress <small>sink · each pass</small></span>
+            <span class="counter" id="progress-count">attempts recorded: <b>0</b></span>
+          </div>
+        </div>
+
+        <div class="run-controls">
+          <button class="btn primary" id="play">▶ Run the factory</button>
+          <button class="btn" id="reset">Reset</button>
+          <span class="status" id="run-status">ready</span>
+        </div>
+
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= HOSTS ================= -->
+  <section id="host">
+    <div class="wrap">
+      <p class="kicker">Why a spec</p>
+      <h2>Write the factory once. Host it anywhere.</h2>
+      <p class="lede narrow">
+        The factory describes <em>what should happen</em>. The host supplies
+        <em>how</em>: which trigger kinds exist, which runner backends run, where
+        sinks write, how ports resolve. Those are adapter concerns — so they can
+        compete without locking in your workflows.
+      </p>
+      <div class="hosts">
+        <div class="mockfile">
+          <span class="badge"># portable, self-describing</span><br>
+          <span class="kw">trigger</span> start: <span class="badge">kind: manual</span><br>
+          <span class="kw">step</span> draft: <span class="badge">runner: agent</span><br>
+          <span class="kw">sink</span> result: <span class="badge">kind: file</span>
+        </div>
+        <div style="text-align:center;color:var(--faint);font-size:1.4rem">↔</div>
+        <div class="hostbox">
+          <ul>
+            <li><strong>Local</strong> — docker containers &amp; the OpenCode server</li>
+            <li><strong>Cloudflare</strong> — workers as steps, R2 as sink</li>
+            <li><strong>AWS / GCP</strong> — Lambda/Batch steps, SQS triggers</li>
+            <li><strong>Your own</strong> — register the kinds your domain needs</li>
+          </ul>
+        </div>
+      </div>
+      <p class="note">
+        The spec defines the concepts; implementations follow. Tooling — validators,
+        diagrammers, editors — can be built against the interface, independently of any one host.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= TRY ================= -->
+  <section id="try">
+    <div class="wrap">
+      <p class="kicker">Reference implementation</p>
+      <h2>A parser, engine and host already exist.</h2>
+      <p class="lede narrow">
+        The spec came first; a working slice now follows it. Validate a factory's
+        shape, plan a run without calling any agent, then execute it against a host.
+      </p>
+      <pre class="trycode"><span class="cm"># check the shape of a factory</span>
+uv run python -m fct  validate examples/minimal/factory.fct
+
+<span class="cm"># plan a run — no agent call, no side effects</span>
+uv run python -m host run  --factory examples/minimal/factory.fct \
+  --trigger start --set <span class="st">'ticket={"key":"ACME-1"}'</span> --dry-run
+
+<span class="cm"># execute it for real (needs an OpenCode server)</span>
+FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
+  uv run python -m host run --factory examples/minimal/factory.fct \
+    --trigger start --set <span class="st">'ticket={"key":"ACME-1"}'</span> --exec local</pre>
+
+      <div class="steps">
+        <div class="stepcard">
+          <span class="num">fct/</span>
+          <h3>Parser &amp; validator</h3>
+          <p>Parses the modules, resolves every reference and checks the spec's invariants.</p>
+        </div>
+        <div class="stepcard">
+          <span class="num">engine/</span>
+          <h3>Run engine</h3>
+          <p>Drives a run as a round-based fixpoint over scopes — loops just re-fire through <code>prev</code>.</p>
+        </div>
+        <div class="stepcard">
+          <span class="num">host/</span>
+          <h3>Host &amp; adapters</h3>
+          <p>Binds runner, trigger, sink and port kinds, preflights them, and persists every run.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap grid">
+    <div>
+      <a class="brand" href="#top" style="font-size:1.05rem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="4" cy="12" r="2.4" fill="#3b82f6"/>
+          <circle cx="12" cy="12" r="2.4" fill="#64748b"/>
+          <circle cx="20" cy="12" r="2.4" fill="#16a34a"/>
+          <path d="M6.4 12h3.2M14.4 12h3.2" stroke="#cbd0d8" stroke-width="1.6"/>
+        </svg>
+        dotFactory
+      </a>
+      <p style="font-size:.88rem;color:var(--muted);margin-top:.7rem;max-width:32rem">
+        A small, focused language for describing workflows — without the baggage
+        of a general-purpose language. The spec is the deliverable.
+      </p>
+    </div>
+    <div>
+      <h3>Read</h3>
+      <ul>
+        <li><a href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md">Specification</a></li>
+        <li><a href="#anatomy">Walkthrough: a minimal factory</a></li>
+        <li><a href="https://slowtechred.substack.com/p/dotfactory">The article</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Elsewhere</h3>
+      <ul>
+        <li><a href="https://github.com/RedBeardLab/dotFactory">github.com/RedBeardLab/dotFactory</a></li>
+        <li><a href="https://github.com/RedBeardLab/dotFactory/blob/main/index.html">This page's source</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="wrap fine">
+    dotFactory is a draft proposal · the spec is evolving · this page is a static, self-contained explainer
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- anatomy walkthrough ---------------- */
+  var STAGES = {
+    types: {
+      tag: "type Ticket = { … }",
+      title: "Types describe the data, and nothing else",
+      body: "A type is a structural record: named fields with shapes. No classes, constructors, or inheritance. <code>Ticket</code> is what the trigger admits; <code>AgentCall</code> is the interface the agent consumes."
+    },
+    port: {
+      tag: "external port credential(key) -> secret",
+      title: "External ports bridge to the outside",
+      body: "A port is declared by the factory and implemented by the host — here it reads <code>FCT_CREDENTIAL_&lt;KEY&gt;</code>. A <code>secret</code> is opaque: redacted in logs, traces and the store, and impossible to compare or convert to text. You can pass it, never print it."
+    },
+    runner: {
+      tag: "runner agent: kind: opencode",
+      title: "A runner is where the work happens",
+      body: "The factory declares the kind and the typed interface; the host supplies the mechanism. <code>agent</code> asks the OpenCode server for structured output, as a JSON schema built from the step's <code>out</code> ports. Swap the host and the same step can run elsewhere."
+    },
+    trigger: {
+      tag: "trigger start: kind: manual",
+      title: "A trigger admits a seed and holds it constant",
+      body: "This one is manual — it fires when someone supplies a ticket. A deployment could just as easily register a cron, webhook, or board trigger. The trigger's <code>out</code> ports become bindable values for the whole run."
+    },
+    loop: {
+      tag: "loop build: … step run: use: build",
+      title: "A composite owns a private scope",
+      body: "<code>build</code> is a composite: it declares <code>in</code>/<code>out</code> ports, and everything else about how it works stays inside. Outside, <code>run</code> invokes it once and sees only the final <code>result</code> and the reviewer's <code>approved</code> verdict. The <code>prev</code> edge is what makes it a <code>loop</code>."
+    },
+    steps: {
+      tag: "prev feedback: review.result if not review.approved",
+      title: "A retry that follows the work",
+      body: "<code>draft</code> and <code>review</code> call the agent. The <code>prev</code> binding is loop-carried: on the first pass it is inactive; afterwards <code>draft</code> re-fires with the reviewer's feedback — but only while the review is not approved and under the attempt budget of 3."
+    },
+    sinks: {
+      tag: "sink progress: … sink result:",
+      title: "Sinks fire per scope",
+      body: "<code>progress</code> sits <em>inside</em> the loop's scope, so it fires on every pass — the retry is observable from outside. <code>result</code> sits downstream of the loop, so it fires once, with the final text and the verdict. Same language, two different firing rules."
+    }
+  };
+
+  var codeEl = document.getElementById("code");
+  var explain = document.getElementById("explain");
+  var buttons = Array.prototype.slice.call(document.querySelectorAll(".stage-btn"));
+  var lines = Array.prototype.slice.call(codeEl.querySelectorAll(".cl"));
+
+  function select(name) {
+    if (!STAGES[name]) { return; }
+    buttons.forEach(function (b) { b.classList.toggle("active", b.dataset.stage === name); });
+    lines.forEach(function (el) {
+      var stages = (el.dataset.stage || "").split(/\s+/);
+      el.classList.toggle("on", stages.indexOf(name) !== -1);
+    });
+    var s = STAGES[name];
+    explain.innerHTML =
+      '<span class="tag">' + s.tag + "</span>" +
+      "<h3>" + s.title + "</h3>" +
+      "<p>" + s.body + "</p>" +
+      '<p class="hint">Click any highlighted line to explain it.</p>';
+  }
+
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () { select(b.dataset.stage); });
+  });
+
+  // clicking a code line selects its first stage
+  lines.forEach(function (el) {
+    var stage = (el.dataset.stage || "").split(/\s+/)[0];
+    if (stage) {
+      el.addEventListener("click", function () { select(stage); });
+      el.addEventListener("mouseenter", function () { el.classList.add("hover"); });
+      el.addEventListener("mouseleave", function () { el.classList.remove("hover"); });
+    }
+  });
+
+  select("loop");
+
+  /* ---------------- run animation ---------------- */
+  var consoleEl = document.getElementById("console");
+  var statusEl = document.getElementById("run-status");
+  var countEl = document.getElementById("progress-count");
+  var playBtn = document.getElementById("play");
+
+  var FRAMES = [
+    { nodes: ["start"], wires: [], log: "ticket {key: ACME-1} admitted by `start`", cls: "" },
+    { nodes: ["draft"], wires: ["w-start-draft"], log: "pass 1 · `draft` calls the agent → one-line result", cls: "" },
+    { nodes: ["review"], wires: ["w-draft-review"], log: "pass 1 · `review` → not approved", cls: "warn", delay: 900 },
+    { nodes: [], wires: ["w-feedback"], log: "not approved → `prev feedback` re-fires `draft`", cls: "warn", delay: 950 },
+    { nodes: ["progress"], wires: [], log: "`progress.json` ← attempt 1   (inner sink · fires each pass)", cls: "ok", progress: 1 },
+    { nodes: ["draft"], wires: ["w-start-draft"], log: "pass 2 · `draft` revises with the feedback", cls: "" },
+    { nodes: ["review"], wires: ["w-draft-review"], log: "pass 2 · `review` → approved ✓", cls: "ok", delay: 900 },
+    { nodes: ["progress"], wires: [], log: "`progress.json` ← attempt 2", cls: "ok", progress: 2 },
+    { nodes: ["result"], wires: ["w-review-result"], log: "loop settles → `run` fires once", cls: "" },
+    { nodes: ["result"], wires: [], log: "`result.json` ← { result, approved: true }   (downstream sink · fires once)", cls: "ok", delay: 700 },
+    { nodes: [], wires: [], log: "run complete", cls: "ok", delay: 500, end: true }
+  ];
+
+  var timers = [];
+  var playing = false;
+
+  function clearTimers() {
+    timers.forEach(clearTimeout);
+    timers = [];
+  }
+
+  function resetRun() {
+    clearTimers();
+    playing = false;
+    playBtn.disabled = false;
+    statusEl.textContent = "ready";
+    document.querySelectorAll(".node").forEach(function (n) {
+      n.classList.remove("hot", "sinklit", "done");
+    });
+    document.querySelectorAll(".wire").forEach(function (w) { w.classList.remove("hot"); });
+    consoleEl.innerHTML = "";
+    FRAMES.forEach(function (f, i) {
+      var row = document.createElement("div");
+      row.className = "row";
+      row.id = "log-" + i;
+      row.innerHTML = '<span class="t">' + pad(i) + "</span>" + f.log;
+      consoleEl.appendChild(row);
+    });
+    countEl.innerHTML = "attempts recorded: <b>0</b>";
+  }
+
+  function pad(n) { return ("0" + n).slice(-2) + "  "; }
+
+  function play() {
+    resetRun();
+    playing = true;
+    playBtn.disabled = true;
+    statusEl.textContent = "running…";
+    var t = 0;
+    FRAMES.forEach(function (f, i) {
+      t += f.delay || 620;
+      timers.push(setTimeout(function () { applyFrame(f, i); }, t));
+    });
+  }
+
+  function applyFrame(f, i) {
+    document.querySelectorAll(".node").forEach(function (n) { n.classList.remove("hot"); });
+    document.querySelectorAll(".wire").forEach(function (w) { w.classList.remove("hot"); });
+    f.nodes.forEach(function (id) {
+      var el = document.querySelector('.node[data-node="' + id + '"]');
+      if (el) { el.classList.add("hot"); }
+    });
+    f.wires.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) { el.classList.add("hot"); }
+    });
+    if (f.progress !== undefined) {
+      var p = document.querySelector('.node[data-node="progress"]');
+      if (p) { p.classList.add("sinklit"); }
+      countEl.innerHTML = "attempts recorded: <b>" + f.progress + "</b>";
+    }
+    if (f.nodes.indexOf("result") !== -1) {
+      var r = document.querySelector('.node[data-node="result"]');
+      if (r) { r.classList.add("sinklit"); }
+    }
+    var row = document.getElementById("log-" + i);
+    if (row) {
+      row.classList.add("show");
+      if (f.cls) { row.classList.add(f.cls); }
+    }
+    if (f.end) {
+      playing = false;
+      playBtn.disabled = false;
+      statusEl.textContent = "done ✓";
+    }
+  }
+
+  playBtn.addEventListener("click", play);
+  document.getElementById("reset").addEventListener("click", function () {
+    resetRun();
+  });
+
+  resetRun();
+})();
+</script>
+</body>
+</html>
