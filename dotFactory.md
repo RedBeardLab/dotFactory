@@ -1,6 +1,6 @@
 # Factory Shape — Specification
 
-Status: **draft v1.20**, frozen for implementation planning. See the
+Status: **draft v1.21**, frozen for implementation planning. See the
 [Changelog](#changelog) for version history.
 
 Scope: the *execution shape* of the factory — modules, triggers, units, steps,
@@ -18,6 +18,8 @@ cyclic dataflow graph of steps and sinks). Every connection is a **binding** —
 typed value flowing from a producer port to a consumer port. Loops and retries
 are loop-carried (`prev`) bindings: a **unit** is a scope and need not loop,
 whereas a **loop** is a unit (or the root) whose graph contains a `prev` cycle.
+A unit declared with the **`loop`** keyword **must** contain a `prev` cycle; one
+declared with `unit` need not.
 Both are evaluated the same way — to quiescence as one firing — but only the
 loop repeats. A scope is evaluated to quiescence as a single firing of the
 node that invokes it, and only its boundary ports cross. The core is a pure
@@ -388,6 +390,8 @@ import**.
 - **`runner:`** → *leaf* unit, executed by a runner's implementation.
 - **nested `step:` / `sink:` entries** → *composite* unit — a **scope**: a
   workflow (and, optionally, its effects), executed by the core engine.
+- **`loop:`** declares a composite unit that **must** contain a `prev` cycle
+  (§10.1); `unit:` may or may not loop. Otherwise the two are identical.
 
 A **step** is an **invocation** inside a composite. It is one of:
 
@@ -517,7 +521,7 @@ Block fields:
 ```ebnf
 module        = { import } { declaration } ;
 import        = "import" STRING "as" ident ;
-declaration   = type_decl | external_port | runner | trigger | sink | unit | step ;
+declaration   = type_decl | external_port | runner | trigger | sink | unit | loop | step ;
 
 type_decl     = "type" ident "=" Type ;
 external_port = "external" "port" ident "(" [ params ] ")" "->" Type ;
@@ -528,6 +532,7 @@ runner        = "runner" ident ":" block ;     # kind + in/out interface + confi
 trigger       = "trigger" ident ":" block ;
 sink          = "sink" ident ":" block ;
 unit          = "unit" ident ":" block ;       # leaf if runner:, composite if nested step:/sink: entries
+loop          = "loop" ident ":" block ;       # a composite unit that must contain a `prev` cycle
 step          = "step" ident ":" block ;       # use: (reference) xor inline unit
 block         = { entry } ;                    # indentation-scoped
 entry         = field | extends | step | sink ;
@@ -766,7 +771,8 @@ step run_tests:
 with boundary ports: the **root** (seeded by its trigger; no `in`), or the body
 of a **composite** step (its `in` / `out` ports). A scope's nodes are its steps
 and sinks. A scope need not loop — but when its graph contains a `prev` cycle
-(§10.1) it is a **loop**. Every scope, looping or not, is evaluated the same
+(§10.1) it is a **loop**. A `loop` declaration must contain one; a `unit`
+declaration need not. Every scope, looping or not, is evaluated the same
 way: to quiescence, as one firing of the node that invokes it.
 
 **A scope runs to quiescence as one firing.** A scope is evaluated once per
@@ -940,7 +946,7 @@ scope, next to the loop, so it fires on every pass; `succeeded` / `failed` sit
 *downstream of* the scope, so each fires once (when its `when` holds).
 
 ```
-unit deliver:                       # the loop's scope: fires once, yields one verdict
+loop deliver:                       # the loop's scope: fires once, yields one verdict
   in:  { ticket: Issue }
   out: { verdict: Verdict = review.verdict }
 
@@ -1199,7 +1205,7 @@ import "types"   as t
 import "input"   as i
 import "runners" as r
 
-unit deliver:
+loop deliver:
   in:  { ticket: i::JiraTicket }
   out:
     commit:        t::Commit       = implement.commit
@@ -1323,6 +1329,11 @@ sink aborted:
 
 ## Changelog
 
+- **v1.21** — **`loop` is a declaration keyword.** `loop name:` declares a
+  composite unit that **must** contain a `prev` cycle — a load-time error
+  without one — while `unit name:` may or may not loop. Otherwise identical:
+  both are scopes (§7, §10). A loop that is only implicit (a `unit` whose graph
+  happens to contain a `prev`) is still a loop; the keyword just states it.
 - **v1.20** — **a closed language and typed runner interfaces.** A runner
   declares its implementation's interface — `in:` / `out:` (types) — and its
   static `config` (a typed value); a leaf unit conforms to that interface, and a
