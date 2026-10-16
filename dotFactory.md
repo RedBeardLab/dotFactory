@@ -1,6 +1,6 @@
 # Factory Shape — Specification
 
-Status: **draft v1.19**, frozen for implementation planning. See the
+Status: **draft v1.20**, frozen for implementation planning. See the
 [Changelog](#changelog) for version history.
 
 Scope: the *execution shape* of the factory — modules, triggers, units, steps,
@@ -43,7 +43,7 @@ Nothing with behaviour is built in. Consumers register adapters by name:
 | **Trigger kind** | `kind:` on a trigger | fires; emits its declared `out` ports |
 | **Sink kind** | `kind:` on a sink | consumes its `in` bindings; performs an external effect |
 | **External port** | `external port` name | takes params, returns one output |
-| **Runner implementation** | `kind:` on a runner | executes a leaf unit's payload |
+| **Runner implementation** | `kind:` on a runner | executes a leaf unit: consumes the runner's `in:`, produces its `out:` |
 
 How an **external port** is evaluated — when it runs, whether its result is
 memoized, and any per-Run state it keeps — is the implementation's concern, not
@@ -228,37 +228,74 @@ execution — trigger, step or sink — is a step and carries its own `step.id`.
 ## 6. Runners
 
 A **runner** is a named definition that selects a registered **implementation**
-(an extension point) and carries its configuration. `kind:` names the
-implementation; the remaining fields configure it. Config values may be
-**structured** — records and lists — and a field may **name a type** it must
-conform to.
+(an extension point) and declares that implementation's **interface**. A runner
+block carries **only** these fields — `kind` (final), `extends?`, `in`, `out`,
+`config`, and the fields its kind declares:
+
+- **`in:`** / **`out:`** — the runner's **interface**: the types the
+  implementation **consumes** and **produces** at run time. The implementation
+  reads and writes the interface's fields by name; the types are the only place
+  those names appear. **Neither is mandatory** — a runner may declare `in:` only,
+  `out:` only, both, or neither:
+  - an **agent** declares `in:` only: it *generates* its output from everything
+    it receives, so the output is the **leaf's** `out:`, not the runner's;
+  - a runner with a **fixed** output shape declares `out:` too;
+  - a **generic** runner (e.g. `docker`) declares neither, and each leaf declares
+    its own ports.
+- **`config:`** — the runner's **static configuration**: a value whose type is
+  named for it (`config: DockerEnv = { … }`), holding values fixed before the
+  Run (an image, a region).
+- **its kind's fields** — the knobs the implementation declares (for `docker`,
+  `image` / `cpu` / `region` / …, and the leaf's `command`). A kind's field may
+  carry its own type, just like `config`.
+
+`prompt` and `auth` are declared by no kind and are not fields: an agent's
+instruction is `prompt: text` in the runner's `in:` interface, and its
+credential is a `secret` field of it (§6.3).
 
 ```
-type RepoMount = {
-  source:  text
-  target:  text
-  include: [text]?
-  exclude: [text]?
-  mode:    enum { ro, rw }?
+# agents.fct — a runner and its interface are declared together
+type AgentCall = { token: secret, prompt: text }
+
+runner agent:                       # an agent declares `in:` only …
+  kind: opencode
+  in:   AgentCall
+  # … its output is the leaf's `out:`, generated from the inputs
+```
+
+A factory that reuses the runner **imports** the module, so the interface comes
+with it — the author binds the interface's fields and never restates the type:
+
+```
+# factory.fct
+import "agents" as agents
+
+step draft:
+  runner: agents::agent
+  in:                                   # conforms to AgentCall
+    token:  credential(key: "opencode") # secret
+    prompt: file "prompts/draft.md"     # text
+  out: { draft: text }
+```
+
+Static configuration is a typed record, not free-form fields:
+
+```
+type DockerEnv = {
+  image:   text
+  cpu:     int?
+  network: enum { none, host, bridge }?
+  workdir: text?
+  region:  text?
 }
 
 runner platform:                    # provided by the platform — the root
-  kind:    docker
-  image:   factory-vm:base
-  cpu:     2
-  network: none
-  region!:                           # required — a concrete runner must set it
-  final endpoint: "https://example.com/foo"  # private — inherited, not overridable
+  kind:   docker
+  config: DockerEnv = { image: "factory-vm:base", cpu: 2, network: none }
 
 runner builder:
   extends: platform
-  region:  eu-west-1                 # satisfies the required field
-  image:   factory-vm:builder        # overrides a parent value
-  repos: [RepoMount] = [             # typed, structured config value
-    { source: "./repo", target: "/workspace/repo",
-      include: ["src/**", "Makefile"], mode: ro }
-  ]
-  endpoint: "https://other.example.com/foo"  # ✗ error — `endpoint` is final
+  config:  DockerEnv = { image: "factory-vm:builder" }   # records merge
 ```
 
 Definitions are not versioned in the source: the factory is code under version
@@ -267,6 +304,8 @@ definition (see §11).
 
 - `kind:` is **implicitly final** — a runner cannot change its implementation.
 - The platform provides the root runner; deployments extend it.
+- `config` is a typed, checked value; `in` / `out` are the interface a leaf unit
+  conforms to (§7).
 
 ### 6.1 Field modifiers
 
@@ -299,28 +338,47 @@ abstract base); a descendant — or the deployment — must satisfy it before th
 definition is used.
 
 ```
-runner base:                      # a template: `region!` is unset
-  kind: docker
-  image: factory-vm:base
-  region!:
-  mounts: [/cache]
+type DockerEnv = { image: text, region: text, mounts: [text]?, cpu: int? }
+
+runner base:
+  kind:   docker
+  config: DockerEnv = { image: "factory-vm:base", region: "eu-west-1",
+                        mounts: ["/cache"] }
 
 runner eu:
   extends: base
-  region: eu-west-1               # satisfies the required field
-  mounts: [/cache/deps]           # lists merge -> [/cache, /cache/deps]
-  # image is inherited: factory-vm:base
+  config:  DockerEnv = { mounts: ["/cache/deps"] }
+  # image and region are inherited; mounts merge -> ["/cache", "/cache/deps"]
 
 runner eu_big:
   extends: eu
-  cpu: 8                          # a new scalar
-  mounts: [/data]                 # lists merge -> [/cache, /cache/deps, /data]
+  config:  DockerEnv = { cpu: 8, mounts: ["/data"] }   # a new scalar; lists merge
 
 runner us:
   extends: eu
-  region: us-east-1               # a scalar overridden by the child
-  # mounts is still [/cache, /cache/deps]
+  config:  DockerEnv = { region: "us-east-1" }         # a scalar overridden
+  # mounts is still ["/cache", "/cache/deps"]
 ```
+
+A runner's `config` value is merged by the same rules — records field-by-field,
+lists concatenated — and must conform to its declared type after merging.
+
+### 6.3 The interface is closed
+
+Every block is **closed**: it carries the fields the spec defines, the fields its
+**kind** declares, and no others. A name that is neither — a misspelling, or a
+field some other kind uses — is a **load-time error**, never silently ignored.
+
+- A runner's `in:` / `out:` are types; its `config` and its kind's fields must
+  conform to the types named for them.
+- **A leaf provides its runner's interface.** When a runner declares `in:` (or
+  `out:`), a leaf naming it binds every required interface field, and may bind
+  further inputs (the implementation receives them as data). A runner that
+  declares neither is **generic**: each leaf declares its own ports.
+- A trigger's and a sink's config fields are the ones *their* kind declares.
+- `prompt` and `auth` are declared by no kind. An agent's instruction is
+  `prompt: text` in the runner's `in:` interface, bound by the step; its
+  credential is `token: secret` there.
 
 ## 7. Units & steps
 
@@ -336,7 +394,7 @@ A **step** is an **invocation** inside a composite. It is one of:
 - a **reference** — `use: name` plus `in:` bindings; the step **inherits**
   the unit's `out`; or
 - an **inline unit** — an anonymous definition (a `runner:` or nested `step:`s +
-  config + `out:`) used once at that step.
+  `in:` + `out:`) used once at that step.
 
 Name a unit only when it is reused or imported; otherwise inline its payload at
 the step.
@@ -344,7 +402,6 @@ the step.
 ```
 unit planner:                    # leaf, named because it is reused
   runner: platform
-  prompt: "plan the issue"
   in:  { issue: Issue }
   out: { plan: Plan }
 
@@ -360,8 +417,7 @@ unit review:
 
   step lint:                     # inline unit: declares its own out
     runner: platform
-    command: "make lint"
-    in:  { plan: plan.plan }
+    in:  { plan: plan.plan, command: "make lint" }
     out: { result: text }
 ```
 
@@ -395,8 +451,12 @@ Rules:
   marked `?` (`name?: source`), which makes an absent source drop the binding
   without gating the node. A node's bindings may not **all** be optional: at
   least one must be required (§11).
-- **Permissive.** A step may bind ports the unit does not declare; the unit
-  ignores them.
+- **A leaf provides its runner's interface.** When the runner declares `in:` /
+  `out:` (§6), the leaf binds every required field; a **generic** runner declares
+  neither, and the leaf declares its own ports (§6.3).
+- **Closed.** A leaf's fields are the ones its runner's kind declares, and a step
+  binds only ports its unit declares. An undeclared name is a load-time error;
+  nothing is silently ignored (§6.3).
 - **`use:`** references any unit by name. Leaf and composite references are
   identical in form.
 - **A unit may invoke itself.** `use:` may name the enclosing unit, directly or
@@ -426,8 +486,8 @@ trigger on_issue:
 
 step run:                          # the root invocation of the workflow
   runner: platform
-  command: "factory-run"
   in:
+    command: "factory-run"
     issue: on_issue.issue
     repo:  checkout(issue: on_issue.issue)         # external port -> Folder
     mcp:   github_mcp()                            # external port -> Mcp
@@ -448,11 +508,11 @@ Block fields:
 
 | block | fields |
 | --- | --- |
-| `runner` | `kind` (final), `extends?`, implementation config fields (with modifiers) |
-| `trigger` | `kind`, `extends?`, subtype config (`cron`, `board`, …), `out` (types) |
-| `sink` | `kind`, `extends?`, subtype config, `in` (bindings), `when` (exit condition) |
-| `unit` | `runner` **xor** a composite (nested `step` / `sink` entries), `extends?`, `in` (types), `out` (types, or type = binding for a composite), config |
-| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s / `sink`s, config, `in` (bindings), `out` (types)) — valid at the root and inside a composite |
+| `runner` | `kind` (final), `extends?`, `in` / `out` (a type — the implementation's interface), `config` (a typed value), and the fields its kind declares |
+| `trigger` | `kind`, `extends?`, `out` (types), and the config fields its kind declares |
+| `sink` | `kind`, `extends?`, `in` (bindings), `when` (exit condition), and the config fields its kind declares |
+| `unit` | `runner` **xor** a composite (nested `step` / `sink` entries), `extends?`, `in` (types), `out` (types, or type = binding for a composite), and the runner's kind fields |
+| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s / `sink`s, `in` (bindings), `out` (types)) — valid at the root and inside a composite |
 
 ```ebnf
 module        = { import } { declaration } ;
@@ -464,7 +524,7 @@ external_port = "external" "port" ident "(" [ params ] ")" "->" Type ;
 params        = param { "," param } ;
 param         = ident ":" Type ;
 
-runner        = "runner" ident ":" block ;     # kind + config
+runner        = "runner" ident ":" block ;     # kind + in/out interface + config
 trigger       = "trigger" ident ":" block ;
 sink          = "sink" ident ":" block ;
 unit          = "unit" ident ":" block ;       # leaf if runner:, composite if nested step:/sink: entries
@@ -476,6 +536,8 @@ extends       = "extends" qual ;
 
 in            = "in" ":" ( types | bindings ) ;
 out           = "out" ":" ( types | out_bindings ) ;
+# within a runner block, `in:` / `out:` hold a single Type — the
+# implementation's interface: iface = ( "in" | "out" ) ":" Type ;
 when          = "when" ":" expr ;
 types         = map( ident [ "?" ] ":" Type ) ;
 bindings      = map( binding ) ;
@@ -625,12 +687,16 @@ Lexical rules:
   are booleans; every other bare token is a `WORD` (`docker`, `ro`, `none`,
   `factory-vm:base`).
 - **Structural keys are reserved** inside a block: `kind`, `extends`, `runner`,
-  `use`, `in`, `out`, `when`, `final` and `step` are interpreted structurally and
-  cannot be used as config field names. The binding marker **`prev`** is reserved
-  too: a port or binding may not be named `prev` (§10.1).
+  `use`, `in`, `out`, `when`, `config`, `final` and `step` are interpreted
+  structurally and cannot be used as config field names. The binding marker
+  **`prev`** is reserved too: a port or binding may not be named `prev` (§10.1).
 
 Notes:
 
+- **Every block is closed (§6.3).** A block's fields are the spec-defined ones
+  plus those its kind declares; an unknown or misspelled field is a load-time
+  error, never silently ignored. `in` / `out` (a runner's interface) and
+  `config` (a runner's static configuration) are structural keys.
 - **The root holds Trigger, Step and Sink; a composite body holds Step and
   Sink.** Triggers are root-only sources; steps are invocations; sinks are
   effects and may appear in any scope. A composite unit is invoked by a step.
@@ -683,13 +749,15 @@ unit review:                        # local declaration
 Large literals may live in their own files.
 
 ```
-unit coder:
+step coder:
   runner: runners::builder
-  prompt: file "prompts/coder.md"
+  in:  { prompt: file "prompts/coder.md" }
+  out: { commit: Commit }
 
-unit run_tests:
+step run_tests:
   runner: runners::builder
-  script: file "scripts/tests.sh"
+  in:  { script: file "scripts/tests.sh" }
+  out: { result: GateResult }
 ```
 
 ## 10. Execution & concurrency
@@ -878,16 +946,15 @@ unit deliver:                       # the loop's scope: fires once, yields one v
 
   step plan:                        # feedback: review -> plan
     runner: platform
-    prompt: "plan the issue"
     in:
+      prompt:        "plan the issue"
       ticket:        in.ticket
       prev feedback: review.verdict if review.verdict is failed and plan.attempt < 3
     out: { plan: text }
 
   step review:
     runner: platform
-    prompt: "review the plan"
-    in:  { plan: plan.plan }
+    in:  { prompt: "review the plan", plan: plan.plan }
     out: { verdict: Verdict }
 
   sink progress:                    # inside the scope: fires once per pass
@@ -946,6 +1013,11 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 **Invariants.**
 
 - A factory declares ≥ 1 Trigger and ≥ 1 Sink.
+- Every block is closed (§6.3): each field is spec-defined or declared by its
+  kind, and each binding names a declared port (or a field of the runner's `in:`
+  interface). An undeclared name is a spec error.
+- A leaf unit provides its runner's `in:` / `out:` interface (§6): every
+  required interface field is bound.
 - Required ports must be bound by a step.
 - A node with bindings has at least one that is **not optional** (`?`): an
   all-optional binding set is a spec error, because an absent optional would be
@@ -989,13 +1061,12 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 - Further operators: arithmetic (`+ - * / %`) is specified; bitwise, string
   concatenation and other operators are not.
 - Run status, cancellation and resume.
-- Provider registry API (how adapters are registered and resolved).
+- Provider registry API (how adapters are registered and resolved, and how a
+  kind declares the config fields it accepts — the §6.3 closure).
 - Value representation and content-addressing.
 - Trigger seed syntax (how a trigger supplies its `out` ports at admission).
 - Remaining `abort` fields: `reasons: [text]` is defined; the rest of the shape
   is open.
-- Per-invocation config overrides (needed to reuse one unit across steps with
-  different config, e.g. four gates from one command unit).
 - `unit` ← `unit` inheritance detail (whether `in` / `out` ports merge by name).
 - Bare `out:` subsetting: what supplies a port declared with no `=`.
 - Referencing a sink's `terminated_at` to order work after an effect: sinks are
@@ -1085,27 +1156,41 @@ type RepoMount = {
   mode:    enum { ro, rw }?
 }
 
+type DockerEnv = {
+  image:   text
+  cpu:     int?
+  network: enum { none, host, bridge }?
+  workdir: text?
+  region:  text?
+  mounts:  [text]?
+  repos:   [RepoMount]?
+}
+
 runner platform:                  # the platform's root runner
-  kind:    docker
-  image:   factory-vm:base
-  cpu:     2
-  network: none
-  workdir: /workspace
-  region:  eu-west-1
+  kind:   docker
+  config: DockerEnv = {
+    image:   "factory-vm:base"
+    cpu:     2
+    network: none
+    workdir: /workspace
+    region:  eu-west-1
+  }
 
 runner builder:                   # build/test: toolchains + dependency cache
   extends: platform
-  image:   factory-vm:builder
-  mounts:  [/cache/deps]
-  repos: [RepoMount] = [
-    {
-      source:  "./repo"
-      target:  "/workspace/repo"
-      include: ["src/**", "Makefile", "pyproject.toml"]
-      exclude: ["**/__pycache__/**"]
-      mode:    ro
-    }
-  ]
+  config:  DockerEnv = {
+    image:  "factory-vm:builder"
+    mounts: ["/cache/deps"]
+    repos: [
+      {
+        source:  "./repo"
+        target:  "/workspace/repo"
+        include: ["src/**", "Makefile", "pyproject.toml"]
+        exclude: ["**/__pycache__/**"]
+        mode:    ro
+      }
+    ]
+  }
 ```
 
 ```
@@ -1125,23 +1210,22 @@ unit deliver:
   # ---- plan, and have the plan reviewed; re-plan with feedback, up to 3 times
   step plan:
     runner: r::platform
-    prompt: file "prompts/planner.md"
     in:
+      prompt:   file "prompts/planner.md"
       ticket:   in.ticket
       feedback?: review.verdict if review.verdict is rejected and plan.attempt < 3
     out: { plan: t::Plan }
 
   step review:
     runner: r::platform
-    prompt: file "prompts/adversary.md"
-    in:  { plan: plan.plan }
+    in:  { prompt: file "prompts/adversary.md", plan: plan.plan }
     out: { verdict: t::ReviewVerdict }
 
   # ---- implement the approved plan
   step implement:
     runner: r::builder
-    prompt: file "prompts/implementer.md"
     in:
+      prompt:   file "prompts/implementer.md"
       ticket:   in.ticket
       plan:     plan.plan
       feedback?: gate.report if not gate.passed and implement.attempt < 3
@@ -1150,33 +1234,29 @@ unit deliver:
   # ---- quality gates: all four run in parallel on the produced commit
   step lint:
     runner: r::builder
-    command: "make lint"
-    in:  { commit: implement.commit }
+    in:  { command: "make lint", commit: implement.commit }
     out: { result: t::GateResult }
 
   step typecheck:
     runner: r::builder
-    command: "make typecheck"
-    in:  { commit: implement.commit }
+    in:  { command: "make typecheck", commit: implement.commit }
     out: { result: t::GateResult }
 
   step unittests:
     runner: r::builder
-    command: "make test"
-    in:  { commit: implement.commit }
+    in:  { command: "make test", commit: implement.commit }
     out: { result: t::GateResult }
 
   step uat:
     runner: r::builder
-    command: "make uat"
-    in:  { commit: implement.commit }
+    in:  { command: "make uat", commit: implement.commit }
     out: { result: t::GateResult }
 
   # ---- join the gates (all-of)
   step gate:
     runner: r::platform
-    command: "factory-gate"
     in:
+      command:   "factory-gate"
       lint:      lint.result
       typecheck: typecheck.result
       unittests: unittests.result
@@ -1188,31 +1268,30 @@ unit deliver:
   # ---- open the PR only if every gate passed
   step open_pr:
     runner: r::platform
-    command: "gh pr create --fill"
     in:
-      commit: implement.commit if gate.passed
+      command: "gh pr create --fill"
+      commit:  implement.commit if gate.passed
     out: { pr: t::PullRequest }
 
   # ---- failure exits: fire when a retry budget is exhausted
   step plan_failure:
     runner: r::platform
-    command: "factory-fail plan"
     in:
+      command: "factory-fail plan"
       ticket:  in.ticket
       verdict: review.verdict if review.verdict is rejected and plan.attempt >= 3
     out: { failure: t::Failure }
 
   step build_failure:
     runner: r::platform
-    command: "factory-fail build"
     in:
-      ticket: in.ticket
-      report: gate.report if not gate.passed and implement.attempt >= 3
+      command: "factory-fail build"
+      ticket:  in.ticket
+      report:  gate.report if not gate.passed and implement.attempt >= 3
     out: { failure: t::Failure }
 
 trigger manual_ticket:                # a manual trigger (fires with provided input)
   kind: manual
-  prompt: "Provide a ticket to start a run"
   out: { ticket: i::JiraTicket }
 
 step run:                             # root invocation: binds the workflow's inputs
@@ -1244,6 +1323,16 @@ sink aborted:
 
 ## Changelog
 
+- **v1.20** — **a closed language and typed runner interfaces.** A runner
+  declares its implementation's interface — `in:` / `out:` (types) — and its
+  static `config` (a typed value); a leaf unit conforms to that interface, and a
+  **generic** runner (no interface) lets each leaf declare its own ports. Every
+  block is **closed**: its fields are the spec-defined ones plus those its kind
+  declares, and an unknown or misspelled field is a **load-time error**, never
+  silently ignored (§6.3). `prompt:` and `auth:` are no longer fields — an
+  agent's instruction is `prompt: text` in the runner's `in:` interface and its
+  credential is `token: secret`; a leaf's `command` is its kind's field (or an
+  `in:` input).
 - **v1.19** — execution is defined over **scopes**. A scope (the root, or a
   composite body) runs to quiescence as one firing, and only its boundary ports
   cross; a unit is a scope, and it need not loop — a loop is a scope whose graph
