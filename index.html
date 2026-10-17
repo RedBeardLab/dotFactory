@@ -418,7 +418,7 @@
           <p>Admits one seed value and holds it constant for the whole run. The host supplies the kind.</p>
           <pre><span class="kw">trigger</span> issue_opened:
   kind: <span class="st">github</span>
-  <span class="kw">config</span>: { repos: [<span class="st">"acme/widgets"</span>] }</pre>
+  <span class="kw">config</span>: { target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-step">▸</span><h3>Step</h3></div>
@@ -493,7 +493,7 @@
             <div class="cl" data-stage="runner"><span class="ln"> 7</span>  in:   AgentCall</div>
             <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> issue_opened:</div>
             <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">github</span></div>
-            <div class="cl" data-stage="trigger"><span class="ln">10</span>  <span class="kw">config</span>: { repos: [<span class="st">"acme/widgets"</span>] }</div>
+            <div class="cl" data-stage="trigger"><span class="ln">10</span>  <span class="kw">config</span>: { target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</div>
             <div class="cl" data-stage="trigger types"><span class="ln">11</span>  out: { issue: Issue }</div>
             <div class="cl" data-stage="loop"><span class="ln">12</span><span class="kw">loop</span> build:</div>
             <div class="cl" data-stage="loop types"><span class="ln">13</span>  in:  { issue: Issue }</div>
@@ -688,7 +688,7 @@
       body: "The factory declares the kind and the typed interface; the host supplies the mechanism. <code>agent</code> asks the OpenCode server for structured output, as a JSON schema built from the step's <code>out</code> ports. Swap the host and the same step can run elsewhere."
     },
     trigger: {
-      tag: "trigger issue_opened: kind: github, config: { repos: […] }",
+      tag: "trigger issue_opened: kind: github, config: { target: … }",
       title: "A trigger admits a seed and holds it constant",
       body: "This one fires when a GitHub issue is opened — the host registers the <code>github</code> kind and hands the run the issue. A deployment could just as easily offer a cron, webhook, or board trigger. The trigger's <code>out</code> ports become bindable values for the whole run."
     },
