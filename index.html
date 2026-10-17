@@ -267,14 +267,6 @@
   .mockfile { font-family: var(--mono); font-size: .8rem; background: #0f1420; color: #e6edf3; border-radius: 12px; padding: 1rem 1.1rem; }
   .mockfile .badge { color: #7d8590; }
 
-  /* ---------- try ---------- */
-  .trycode { margin-top: 1.6rem; }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.8rem; }
-  .stepcard { border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem; }
-  .stepcard .num { font-family: var(--mono); font-size: .75rem; color: var(--accent); font-weight: 700; }
-  .stepcard h3 { margin: .4rem 0 .3rem; font-size: .98rem; }
-  .stepcard p { font-size: .85rem; color: var(--muted); margin: 0; }
-
   /* ---------- footer ---------- */
   footer { border-top: 1px solid var(--line); padding: 3rem 0 4rem; background: var(--soft); }
   footer .grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 2rem; }
@@ -284,7 +276,7 @@
   footer .fine { margin-top: 2.5rem; font-size: .8rem; color: var(--faint); }
 
   @media (max-width: 860px) {
-    .cols, .anatomy, .hosts, .steps, .vocab, footer .grid { grid-template-columns: 1fr; }
+    .cols, .anatomy, .hosts, .vocab, footer .grid { grid-template-columns: 1fr; }
     .vocab { grid-template-columns: 1fr 1fr; }
     .explain { position: static; }
     section { padding: 3rem 0; }
@@ -318,7 +310,6 @@
       <a href="#anatomy">Anatomy</a>
       <a href="#run">See it run</a>
       <a href="#host">Hosts</a>
-      <a href="#try">Try it</a>
       <a href="https://github.com/RedBeardLab/dotFactory">GitHub</a>
     </nav>
   </div>
@@ -356,15 +347,15 @@
 
       <div class="preview">
         <div class="flow">
-          <span class="pill trigger"><span class="dot"></span>start</span>
+          <span class="pill trigger"><span class="dot"></span>github&nbsp;·&nbsp;issue opened</span>
           <span class="arrow">→</span>
           <span class="pill step"><span class="dot"></span>run</span>
           <span class="arrow">→</span>
-          <span class="pill sink"><span class="dot"></span>result</span>
+          <span class="pill sink"><span class="dot"></span>slack&nbsp;·&nbsp;notify</span>
           <span class="arrow back" title="feedback">⟲</span>
           <span class="pill muted">retries under the hood</span>
         </div>
-        <p class="caption">one ticket in&nbsp;&nbsp;·&nbsp;&nbsp;one result out&nbsp;&nbsp;·&nbsp;&nbsp;a review loop in between</p>
+        <p class="caption">an issue in&nbsp;&nbsp;·&nbsp;&nbsp;a slack post out&nbsp;&nbsp;·&nbsp;&nbsp;a review loop in between</p>
       </div>
     </div>
   </section>
@@ -384,10 +375,10 @@
         <div class="panel">
           <h3>What you actually mean</h3>
           <ul>
-            <li>The trigger admits a ticket.</li>
-            <li>The step drafts a result.</li>
+            <li>The trigger fires on a GitHub issue.</li>
+            <li>The step drafts a reply.</li>
             <li>The reviewer approves or sends it back.</li>
-            <li>The sink writes the file.</li>
+            <li>The sink pings the team on Slack.</li>
           </ul>
         </div>
         <div class="panel strike">
@@ -420,13 +411,13 @@
         <div class="vcard">
           <div class="top"><span class="glyph g-type">T</span><h3>Type</h3></div>
           <p>Structural records. Fields and shapes — no classes, inheritance, or constructors.</p>
-          <pre><span class="kw">type</span> Ticket = { key: <span class="ty">text</span> }</pre>
+          <pre><span class="kw">type</span> Issue = { number: <span class="ty">int</span> }</pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-trigger">▶</span><h3>Trigger</h3></div>
           <p>Admits one seed value and holds it constant for the whole run. The host supplies the kind.</p>
-          <pre><span class="kw">trigger</span> start:
-  kind: <span class="st">manual</span></pre>
+          <pre><span class="kw">trigger</span> issue_opened:
+  kind: <span class="st">github</span></pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-step">▸</span><h3>Step</h3></div>
@@ -443,7 +434,7 @@
         <div class="vcard">
           <div class="top"><span class="glyph g-bind">↦</span><h3>Binding</h3></div>
           <p>Named edges that move values between ports. The bindings <em>are</em> the program.</p>
-          <pre>in: { ticket: in.ticket }</pre>
+          <pre>in: { issue: in.issue }</pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-loop">⟲</span><h3>Loop</h3></div>
@@ -453,8 +444,8 @@
         <div class="vcard">
           <div class="top"><span class="glyph g-sink">■</span><h3>Sink</h3></div>
           <p>An effect. Inside a loop it fires each pass; downstream it fires once.</p>
-          <pre><span class="kw">sink</span> result:
-  kind: <span class="st">file</span></pre>
+          <pre><span class="kw">sink</span> notify:
+  kind: <span class="st">slack</span></pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-port">⇥</span><h3>External port</h3></div>
@@ -492,41 +483,44 @@
           <div class="bar"><i></i><i></i><i></i><span style="margin-left:.5rem">minimal.fct</span></div>
           <div class="code" id="code">
             <div class="cl" data-stage="types"><span class="ln"> 1</span><span class="cm"># the data that flows</span></div>
-            <div class="cl" data-stage="types"><span class="ln"> 2</span><span class="kw">type</span> Ticket = { key: <span class="ty">text</span>, title: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="types"><span class="ln"> 2</span><span class="kw">type</span> Issue = { repo: <span class="ty">text</span>, number: <span class="ty">int</span>, title: <span class="ty">text</span>, body: <span class="ty">text</span> }</div>
             <div class="cl" data-stage="types runner"><span class="ln"> 3</span><span class="kw">type</span> AgentCall = { token: <span class="ty">secret</span>, prompt: <span class="ty">text</span> }</div>
             <div class="cl" data-stage="port"><span class="ln"> 4</span><span class="kw">external port</span> credential(key: <span class="ty">text</span>) -&gt; <span class="ty">secret</span></div>
             <div class="cl" data-stage="runner"><span class="ln"> 5</span><span class="kw">runner</span> agent:</div>
             <div class="cl" data-stage="runner"><span class="ln"> 6</span>  kind: <span class="st">opencode</span></div>
             <div class="cl" data-stage="runner"><span class="ln"> 7</span>  in:   AgentCall</div>
-            <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> start:</div>
-            <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">manual</span></div>
-            <div class="cl" data-stage="trigger types"><span class="ln">10</span>  out: { ticket: Ticket }</div>
+            <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> issue_opened:</div>
+            <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">github</span></div>
+            <div class="cl" data-stage="trigger types"><span class="ln">10</span>  out: { issue: Issue }</div>
             <div class="cl" data-stage="loop"><span class="ln">11</span><span class="kw">loop</span> build:</div>
-            <div class="cl" data-stage="loop types"><span class="ln">12</span>  in:  { ticket: Ticket }</div>
+            <div class="cl" data-stage="loop types"><span class="ln">12</span>  in:  { issue: Issue }</div>
             <div class="cl" data-stage="loop"><span class="ln">13</span>  out:</div>
             <div class="cl" data-stage="loop"><span class="ln">14</span>    result:   <span class="ty">text</span> = review.result</div>
             <div class="cl" data-stage="loop"><span class="ln">15</span>    approved: <span class="ty">bool</span> = review.approved</div>
             <div class="cl" data-stage="steps loop"><span class="ln">16</span>  <span class="kw">step</span> draft:</div>
             <div class="cl" data-stage="steps runner"><span class="ln">17</span>    runner: agent</div>
             <div class="cl" data-stage="steps"><span class="ln">18</span>    in:</div>
-            <div class="cl" data-stage="steps"><span class="ln">19</span>      prompt: <span class="st">"Draft a one-line result."</span></div>
-            <div class="cl" data-stage="steps"><span class="ln">20</span>      ticket: in.ticket</div>
+            <div class="cl" data-stage="steps"><span class="ln">19</span>      prompt: <span class="st">"Draft a reply for the issue."</span></div>
+            <div class="cl" data-stage="steps"><span class="ln">20</span>      issue:  in.issue</div>
             <div class="cl" data-stage="steps port"><span class="ln">21</span>      token:  credential(key: <span class="st">"opencode"</span>)</div>
             <div class="cl" data-stage="steps loop"><span class="ln">22</span>      <span class="kw">prev</span> feedback: review.result <span class="kw">if</span> <span class="fn">not</span> review.approved <span class="kw">and</span> draft.attempt &lt; 3</div>
             <div class="cl" data-stage="steps"><span class="ln">23</span>    out: { draft: <span class="ty">text</span> }</div>
             <div class="cl" data-stage="steps loop"><span class="ln">24</span>  <span class="kw">step</span> review:</div>
             <div class="cl" data-stage="steps runner"><span class="ln">25</span>    runner: agent</div>
-            <div class="cl" data-stage="steps"><span class="ln">26</span>    in: { prompt: <span class="st">"Approve the draft."</span>, text: draft.draft }</div>
+            <div class="cl" data-stage="steps"><span class="ln">26</span>    in: { prompt: <span class="st">"Approve the reply."</span>, text: draft.draft }</div>
             <div class="cl" data-stage="steps loop"><span class="ln">27</span>    out: { approved: <span class="ty">bool</span>, result: <span class="ty">text</span> }</div>
             <div class="cl" data-stage="sinks loop"><span class="ln">28</span>  <span class="kw">sink</span> progress:</div>
             <div class="cl" data-stage="sinks steps"><span class="ln">29</span>    kind: <span class="st">file</span>  path: <span class="st">"out/progress.json"</span></div>
             <div class="cl" data-stage="sinks steps"><span class="ln">30</span>    in: { attempt: draft.attempt, draft: draft.draft }</div>
             <div class="cl" data-stage="loop"><span class="ln">31</span><span class="kw">step</span> run:</div>
             <div class="cl" data-stage="loop"><span class="ln">32</span>  use: build</div>
-            <div class="cl" data-stage="loop trigger"><span class="ln">33</span>  in: { ticket: start.ticket }</div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">34</span><span class="kw">sink</span> result:</div>
-            <div class="cl" data-stage="sinks"><span class="ln">35</span>  kind: <span class="st">file</span>  path: <span class="st">"out/result.json"</span></div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">36</span>  in: { result: run.result, approved: run.approved }</div>
+            <div class="cl" data-stage="loop trigger"><span class="ln">33</span>  in: { issue: issue_opened.issue }</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">34</span><span class="kw">sink</span> notify:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">35</span>  kind: <span class="st">slack</span></div>
+            <div class="cl" data-stage="sinks"><span class="ln">36</span>  in:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">37</span>    channel: <span class="st">"#support"</span></div>
+            <div class="cl" data-stage="sinks"><span class="ln">38</span>    handles: [ <span class="st">"@oncall"</span>, <span class="st">"@platform"</span> ]</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">39</span>    text:    run.result</div>
           </div>
         </div>
 
@@ -543,10 +537,10 @@
       <p class="kicker">The execution model</p>
       <h2>A run is a round of firings until nothing can fire.</h2>
       <p class="lede narrow">
-        Press play. The trigger admits a ticket, the loop runs <code>draft →
+        Press play. The trigger admits a GitHub issue, the loop runs <code>draft →
         review</code>, the reviewer sends the draft back once, then approves.
         The <code>progress</code> sink fires <strong>inside</strong> the loop —
-        once per pass — while <code>result</code> waits downstream and fires
+        once per pass — while <code>notify</code> waits downstream and fires
         <strong>once</strong>.
       </p>
 
@@ -559,13 +553,13 @@
           </div>
 
           <div class="lane">
-            <span class="node n-trigger" data-node="start">start <small>trigger</small></span>
-            <span class="wire" id="w-start-draft"></span>
+            <span class="node n-trigger" data-node="issue">issue <small>trigger · github</small></span>
+            <span class="wire" id="w-issue-draft"></span>
             <span class="node" data-node="draft">draft <small>step</small></span>
             <span class="wire" id="w-draft-review"></span>
             <span class="node" data-node="review">review <small>step</small></span>
-            <span class="wire" id="w-review-result"></span>
-            <span class="node n-sink" data-node="result">result <small>sink</small></span>
+            <span class="wire" id="w-review-notify"></span>
+            <span class="node n-sink" data-node="notify">notify <small>sink · slack</small></span>
           </div>
 
           <div class="feedback">
@@ -607,9 +601,9 @@
       <div class="hosts">
         <div class="mockfile">
           <span class="badge"># portable, self-describing</span><br>
-          <span class="kw">trigger</span> start: <span class="badge">kind: manual</span><br>
+          <span class="kw">trigger</span> issue_opened: <span class="badge">kind: github</span><br>
           <span class="kw">step</span> draft: <span class="badge">runner: agent</span><br>
-          <span class="kw">sink</span> result: <span class="badge">kind: file</span>
+          <span class="kw">sink</span> notify: <span class="badge">kind: slack</span>
         </div>
         <div style="text-align:center;color:var(--faint);font-size:1.4rem">↔</div>
         <div class="hostbox">
@@ -625,47 +619,6 @@
         The spec defines the concepts; implementations follow. Tooling — validators,
         diagrammers, editors — can be built against the interface, independently of any one host.
       </p>
-    </div>
-  </section>
-
-  <!-- ================= TRY ================= -->
-  <section id="try">
-    <div class="wrap">
-      <p class="kicker">Reference implementation</p>
-      <h2>A parser, engine and host already exist.</h2>
-      <p class="lede narrow">
-        The spec came first; a working slice now follows it. Validate a factory's
-        shape, plan a run without calling any agent, then execute it against a host.
-      </p>
-      <pre class="trycode"><span class="cm"># check the shape of a factory</span>
-uv run python -m fct  validate examples/minimal/factory.fct
-
-<span class="cm"># plan a run — no agent call, no side effects</span>
-uv run python -m host run  --factory examples/minimal/factory.fct \
-  --trigger start --set <span class="st">'ticket={"key":"ACME-1"}'</span> --dry-run
-
-<span class="cm"># execute it for real (needs an OpenCode server)</span>
-FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
-  uv run python -m host run --factory examples/minimal/factory.fct \
-    --trigger start --set <span class="st">'ticket={"key":"ACME-1"}'</span> --exec local</pre>
-
-      <div class="steps">
-        <div class="stepcard">
-          <span class="num">fct/</span>
-          <h3>Parser &amp; validator</h3>
-          <p>Parses the modules, resolves every reference and checks the spec's invariants.</p>
-        </div>
-        <div class="stepcard">
-          <span class="num">engine/</span>
-          <h3>Run engine</h3>
-          <p>Drives a run as a round-based fixpoint over scopes — loops just re-fire through <code>prev</code>.</p>
-        </div>
-        <div class="stepcard">
-          <span class="num">host/</span>
-          <h3>Host &amp; adapters</h3>
-          <p>Binds runner, trigger, sink and port kinds, preflights them, and persists every run.</p>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -716,9 +669,9 @@ FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
   /* ---------------- anatomy walkthrough ---------------- */
   var STAGES = {
     types: {
-      tag: "type Ticket = { … }",
+      tag: "type Issue = { … }",
       title: "Types describe the data, and nothing else",
-      body: "A type is a structural record: named fields with shapes. No classes, constructors, or inheritance. <code>Ticket</code> is what the trigger admits; <code>AgentCall</code> is the interface the agent consumes."
+      body: "A type is a structural record: named fields with shapes. No classes, constructors, or inheritance. <code>Issue</code> is what the trigger admits; <code>AgentCall</code> is the interface the agent consumes."
     },
     port: {
       tag: "external port credential(key) -> secret",
@@ -731,9 +684,9 @@ FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
       body: "The factory declares the kind and the typed interface; the host supplies the mechanism. <code>agent</code> asks the OpenCode server for structured output, as a JSON schema built from the step's <code>out</code> ports. Swap the host and the same step can run elsewhere."
     },
     trigger: {
-      tag: "trigger start: kind: manual",
+      tag: "trigger issue_opened: kind: github",
       title: "A trigger admits a seed and holds it constant",
-      body: "This one is manual — it fires when someone supplies a ticket. A deployment could just as easily register a cron, webhook, or board trigger. The trigger's <code>out</code> ports become bindable values for the whole run."
+      body: "This one fires when a GitHub issue is opened — the host registers the <code>github</code> kind and hands the run the issue. A deployment could just as easily offer a cron, webhook, or board trigger. The trigger's <code>out</code> ports become bindable values for the whole run."
     },
     loop: {
       tag: "loop build: … step run: use: build",
@@ -746,9 +699,9 @@ FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
       body: "<code>draft</code> and <code>review</code> call the agent. The <code>prev</code> binding is loop-carried: on the first pass it is inactive; afterwards <code>draft</code> re-fires with the reviewer's feedback — but only while the review is not approved and under the attempt budget of 3."
     },
     sinks: {
-      tag: "sink progress: … sink result:",
+      tag: "sink progress: … sink notify:",
       title: "Sinks fire per scope",
-      body: "<code>progress</code> sits <em>inside</em> the loop's scope, so it fires on every pass — the retry is observable from outside. <code>result</code> sits downstream of the loop, so it fires once, with the final text and the verdict. Same language, two different firing rules."
+      body: "<code>progress</code> sits <em>inside</em> the loop's scope, so it fires on every pass — the retry is observable from outside. <code>notify</code> sits downstream, so it fires once: a slack sink that takes a channel, a list of handles to mention, and the text. Same language, two different firing rules."
     }
   };
 
@@ -795,16 +748,16 @@ FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
   var playBtn = document.getElementById("play");
 
   var FRAMES = [
-    { nodes: ["start"], wires: [], log: "ticket {key: ACME-1} admitted by `start`", cls: "" },
-    { nodes: ["draft"], wires: ["w-start-draft"], log: "pass 1 · `draft` calls the agent → one-line result", cls: "" },
+    { nodes: ["issue"], wires: [], log: "issue #42 opened → admitted by `issue_opened`", cls: "" },
+    { nodes: ["draft"], wires: ["w-issue-draft"], log: "pass 1 · `draft` calls the agent → a reply", cls: "" },
     { nodes: ["review"], wires: ["w-draft-review"], log: "pass 1 · `review` → not approved", cls: "warn", delay: 900 },
     { nodes: [], wires: ["w-feedback"], log: "not approved → `prev feedback` re-fires `draft`", cls: "warn", delay: 950 },
     { nodes: ["progress"], wires: [], log: "`progress.json` ← attempt 1   (inner sink · fires each pass)", cls: "ok", progress: 1 },
-    { nodes: ["draft"], wires: ["w-start-draft"], log: "pass 2 · `draft` revises with the feedback", cls: "" },
+    { nodes: ["draft"], wires: ["w-issue-draft"], log: "pass 2 · `draft` revises with the feedback", cls: "" },
     { nodes: ["review"], wires: ["w-draft-review"], log: "pass 2 · `review` → approved ✓", cls: "ok", delay: 900 },
     { nodes: ["progress"], wires: [], log: "`progress.json` ← attempt 2", cls: "ok", progress: 2 },
-    { nodes: ["result"], wires: ["w-review-result"], log: "loop settles → `run` fires once", cls: "" },
-    { nodes: ["result"], wires: [], log: "`result.json` ← { result, approved: true }   (downstream sink · fires once)", cls: "ok", delay: 700 },
+    { nodes: ["notify"], wires: ["w-review-notify"], log: "loop settles → `run` fires once", cls: "" },
+    { nodes: ["notify"], wires: [], log: "slack ← `notify` { channel: \"#support\", handles: [@oncall, @platform] }", cls: "ok", delay: 700 },
     { nodes: [], wires: [], log: "run complete", cls: "ok", delay: 500, end: true }
   ];
 
@@ -866,8 +819,8 @@ FCT_CREDENTIAL_OPENCODE=… OPENCODE_SERVER_URL=http://127.0.0.1:4096 \
       if (p) { p.classList.add("sinklit"); }
       countEl.innerHTML = "attempts recorded: <b>" + f.progress + "</b>";
     }
-    if (f.nodes.indexOf("result") !== -1) {
-      var r = document.querySelector('.node[data-node="result"]');
+    if (f.nodes.indexOf("notify") !== -1) {
+      var r = document.querySelector('.node[data-node="notify"]');
       if (r) { r.classList.add("sinklit"); }
     }
     var row = document.getElementById("log-" + i);
