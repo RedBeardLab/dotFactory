@@ -418,7 +418,7 @@
           <p>Admits one seed value and holds it constant for the whole run. The host supplies the kind.</p>
           <pre><span class="kw">trigger</span> issue_opened:
   kind: <span class="st">github</span>
-  <span class="kw">config</span>: { target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</pre>
+  <span class="kw">config</span>: { path: <span class="st">"/api/github/webhook"</span>, target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-step">▸</span><h3>Step</h3></div>
@@ -493,7 +493,7 @@
             <div class="cl" data-stage="runner"><span class="ln"> 7</span>  in:   AgentCall</div>
             <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> issue_opened:</div>
             <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">github</span></div>
-            <div class="cl" data-stage="trigger"><span class="ln">10</span>  <span class="kw">config</span>: { target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</div>
+            <div class="cl" data-stage="trigger"><span class="ln">10</span>  <span class="kw">config</span>: { path: <span class="st">"/api/github/webhook"</span>, target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</div>
             <div class="cl" data-stage="trigger types"><span class="ln">11</span>  out: { issue: Issue }</div>
             <div class="cl" data-stage="loop"><span class="ln">12</span><span class="kw">loop</span> build:</div>
             <div class="cl" data-stage="loop types"><span class="ln">13</span>  in:  { issue: Issue }</div>
