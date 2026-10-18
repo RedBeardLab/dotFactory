@@ -1,6 +1,6 @@
 # Factory Shape — Specification
 
-Status: **draft v1.21**, frozen for implementation planning. See the
+Status: **draft v1.25**, frozen for implementation planning. See the
 [Changelog](#changelog) for version history.
 
 Scope: the *execution shape* of the factory — modules, triggers, units, steps,
@@ -45,7 +45,7 @@ Nothing with behaviour is built in. Consumers register adapters by name:
 | **Trigger kind** | `kind:` on a trigger | fires; emits its declared `out` ports |
 | **Sink kind** | `kind:` on a sink | consumes its `in` bindings; performs an external effect |
 | **External port** | `external port` name | takes params, returns one output |
-| **Runner implementation** | `kind:` on a runner | executes a leaf unit: consumes the runner's `in:`, produces its `out:` |
+| **Runner implementation** | `kind:` on a runner | executes a leaf unit: consumes the runner's `in:` and produces its `out:` — or, for an **open** side, consumes/produces what the leaf declares (§6.4) |
 
 How an **external port** is evaluated — when it runs, whether its result is
 memoized, and any per-Run state it keeps — is the implementation's concern, not
@@ -197,6 +197,52 @@ conforms only to `secret`: it is not `text`, `text` is not `secret`, and no
 operator, cast or built-in converts between them. This keeps a secret from being interpolated into a command, a
 path or a message by accident, and from drifting into an observation as text.
 
+### 4.3 Deployment secrets
+
+A `secret` enters a Run only as data (§4.2). One way a deployment supplies it is
+a **credential store**: named secrets the deployment keeps and the
+`credential(key)` external port resolves. This section fixes the invariants a
+factory may rely on, and the scope precedence a hosted deployment is expected to
+use — not the mechanism behind either.
+
+**Invariants (normative).**
+
+- **A factory reads only its own tenant's secrets.** Whatever key it names, a
+  `credential(key)` never returns a secret from a scope the Run does not belong
+  to. The wrong scope would leak a credential across tenants.
+- **The value stays a `secret`.** The port returns plaintext — unwrapping is the
+  store's concern — but the engine conforms the return to `secret` (§4.2), so
+  redaction and opacity are unchanged: the Run cannot compute on it and every
+  observation point reports the marker.
+- **Write-only at the interface.** A management interface (the deployment's API
+  or UI) exposes a stored secret's *metadata* — its key and label — but never
+  its value. A value cannot be read back; replacing one overwrites it.
+
+**Scopes and precedence (expected).** A deployment may keep secrets at several
+**scopes**. A hosted deployment is expected to resolve a `credential(key)` from
+the **narrowest scope to the widest**, first match winning, and only then from
+the deployment environment (`FCT_CREDENTIAL_<KEY>`), which is not tenant-scoped:
+
+1. **factory** — the factory being run (most specific to the Run);
+2. **user** — the person the Run acts for;
+3. **organization** — the tenant the factory belongs to.
+
+Only the scopes that apply are consulted: an automated Run with no acting user
+(a webhook delivery, a cron fire, a CLI run) has no **user** scope, so it
+resolves from **factory** then **organization**. A factory that belongs to no
+organization has no **organization** scope. A user may belong to several
+organizations, but a Run consults only its **factory's** organization.
+
+**Implementations may vary.** How a deployment scopes, stores and protects
+secrets — a database, a KMS, an OS keychain — is its concern. The invariants
+above are what a factory relies on; the precedence above is the *expected*
+default, not a mandate. A factory run locally on an end user's machine, for
+example, may resolve only from that user's own scope (a keychain, a local file)
+and need no factory or organization tier at all — and may order what it has
+differently. Authentication, tenancy, at-rest protection (encryption, a KMS,
+rotation) and who may manage a scope are likewise deployment concerns, out of
+scope here.
+
 ## 5. Implicit ports
 
 Every **trigger and step** that fires exposes **`terminated_at: time`**, the
@@ -232,24 +278,27 @@ execution — trigger, step or sink — is a step and carries its own `step.id`.
 A **runner** is a named definition that selects a registered **implementation**
 (an extension point) and declares that implementation's **interface**. A runner
 block carries **only** these fields — `kind` (final), `extends?`, `in`, `out`,
-`config`, and the fields its kind declares:
+`config`:
 
-- **`in:`** / **`out:`** — the runner's **interface**: the types the
-  implementation **consumes** and **produces** at run time. The implementation
-  reads and writes the interface's fields by name; the types are the only place
-  those names appear. **Neither is mandatory** — a runner may declare `in:` only,
-  `out:` only, both, or neither:
-  - an **agent** declares `in:` only: it *generates* its output from everything
-    it receives, so the output is the **leaf's** `out:`, not the runner's;
-  - a runner with a **fixed** output shape declares `out:` too;
-  - a **generic** runner (e.g. `docker`) declares neither, and each leaf declares
-    its own ports.
-- **`config:`** — the runner's **static configuration**: a value whose type is
-  named for it (`config: DockerEnv = { … }`), holding values fixed before the
-  Run (an image, a region).
-- **its kind's fields** — the knobs the implementation declares (for `docker`,
-  `image` / `cpu` / `region` / …, and the leaf's `command`). A kind's field may
-  carry its own type, just like `config`.
+- **`in:`** / **`out:`** — the runner's **interface**: what the implementation
+  **consumes** and **produces** at run time. The implementation reads and writes
+  the interface's fields by name; the types are the only place those names
+  appear. **Both are required**, and each is a **type** or the keyword
+  **`open`**:
+  - **`in:`** — a type is a **minimum**: the leaf binds every required field and
+    may bind **more**, and those extras are data the implementation receives.
+    `open` fixes no inputs — the leaf's inputs are its own;
+  - **`out:`** — a type is a **fixed** shape every leaf inherits (the leaf
+    declares no `out:`); `open` fixes no shape, so each leaf declares its own
+    `out:` and the implementation produces a value for every declared port
+    (§6.4).
+  A type given to either side names at least one field.
+- **`config:`** — the runner's **static configuration**: a typed value
+  (`config: DockerEnv = { … }`) that holds **every kind-specific knob** fixed
+  **before the Run** (for `docker`, the `image` / `cpu` / `region` / … and the
+  leaf's `command`). Since v1.22 it is the **only** place a runner's kind data
+  lives. `config` is literal data (§8): read at bind time, never a binding
+  source, and never part of the dataflow graph.
 
 `prompt` and `auth` are declared by no kind and are not fields: an agent's
 instruction is `prompt: text` in the runner's `in:` interface, and its
@@ -259,10 +308,10 @@ credential is a `secret` field of it (§6.3).
 # agents.fct — a runner and its interface are declared together
 type AgentCall = { token: secret, prompt: text }
 
-runner agent:                       # an agent declares `in:` only …
+runner agent:                       # an agent fixes its inputs …
   kind: opencode
   in:   AgentCall
-  # … its output is the leaf's `out:`, generated from the inputs
+  out:  open                        # … and leaves the output to the leaf
 ```
 
 A factory that reuses the runner **imports** the module, so the interface comes
@@ -293,10 +342,14 @@ type DockerEnv = {
 
 runner platform:                    # provided by the platform — the root
   kind:   docker
+  in:     open
+  out:    open
   config: DockerEnv = { image: "factory-vm:base", cpu: 2, network: none }
 
 runner builder:
   extends: platform
+  in:      open
+  out:     open
   config:  DockerEnv = { image: "factory-vm:builder" }   # records merge
 ```
 
@@ -344,20 +397,28 @@ type DockerEnv = { image: text, region: text, mounts: [text]?, cpu: int? }
 
 runner base:
   kind:   docker
+  in:     open
+  out:    open
   config: DockerEnv = { image: "factory-vm:base", region: "eu-west-1",
                         mounts: ["/cache"] }
 
 runner eu:
   extends: base
+  in:      open
+  out:     open
   config:  DockerEnv = { mounts: ["/cache/deps"] }
   # image and region are inherited; mounts merge -> ["/cache", "/cache/deps"]
 
 runner eu_big:
   extends: eu
+  in:      open
+  out:     open
   config:  DockerEnv = { cpu: 8, mounts: ["/data"] }   # a new scalar; lists merge
 
 runner us:
   extends: eu
+  in:      open
+  out:     open
   config:  DockerEnv = { region: "us-east-1" }         # a scalar overridden
   # mounts is still ["/cache", "/cache/deps"]
 ```
@@ -365,22 +426,56 @@ runner us:
 A runner's `config` value is merged by the same rules — records field-by-field,
 lists concatenated — and must conform to its declared type after merging.
 
-### 6.3 The interface is closed
+### 6.3 Every block is closed
 
-Every block is **closed**: it carries the fields the spec defines, the fields its
-**kind** declares, and no others. A name that is neither — a misspelling, or a
-field some other kind uses — is a **load-time error**, never silently ignored.
+A runner, trigger, sink and step carries the fields the spec defines plus **one**
+non-structural key, `config` — its **static data** (v1.22). A `unit` / `loop` is
+a pure definition and carries none. Any other field — a misspelling, or a knob
+some other kind uses — is a **load-time error**, never silently ignored; the
+reference parser enforces this syntactically, needing no kind registry:
 
-- A runner's `in:` / `out:` are types; its `config` and its kind's fields must
-  conform to the types named for them.
-- **A leaf provides its runner's interface.** When a runner declares `in:` (or
-  `out:`), a leaf naming it binds every required interface field, and may bind
-  further inputs (the implementation receives them as data). A runner that
-  declares neither is **generic**: each leaf declares its own ports.
-- A trigger's and a sink's config fields are the ones *their* kind declares.
+| block | fields |
+| --- | --- |
+| runner | `kind`, `extends?`, `in`, `out` (each a type or `open`), `config` |
+| trigger | `kind`, `extends?`, `out`, `config` |
+| sink | `kind`, `extends?`, `in`, `when`, `config` |
+| step | `use` xor (a runner, or nested `step`/`sink`), `in`, `out`, `config` |
+| unit / loop | `extends?`, `in`, `out` |
+
+- A runner's `in:` / `out:` are each a type or `open` (§6.4); its `config` must
+  conform to the type named for it. `config` is **literal data** (§8): fixed
+  before the Run, never a binding source, and never part of the dataflow graph.
+- **A leaf provides its runner's interface.** Against a typed `in:`, a leaf binds
+  every required interface field and may bind further inputs (the implementation
+  receives them as data); against an `open` `in:`, it declares its own. A typed
+  `out:` is the leaf's fixed shape, which the leaf declares not; an `open` `out:`
+  is declared by the leaf (§6.4).
+- **What a block's `config` may contain is the *kind's schema*** — declaring it
+  is the provider registry's job (§12). Until that exists the parser checks only
+  that `config` is a well-formed (optionally typed) literal value, and each
+  adapter checks the entries it reads.
 - `prompt` and `auth` are declared by no kind. An agent's instruction is
   `prompt: text` in the runner's `in:` interface, bound by the step; its
   credential is `token: secret` there.
+
+### 6.4 Fixed and open outputs
+
+A runner's output is **fixed** (`out:` is a type) or **open** (`out: open`).
+Under a fixed runner every leaf inherits the shape and the implementation writes
+those ports. Under an open runner the runner fixes no shape: each **leaf**
+declares its own `out:`, and the implementation produces a value for every
+declared port. The leaf's port types are then the *caller's contract*, not the
+implementation's interface.
+
+An open kind may be **generative**: it derives what to produce from the declared
+ports. An **agent** is generative — the leaf's `out:` is the structure the model
+must return, and the value is the validated result; so a generative kind may
+restrict which types it accepts (a `secret`, for one). A kind that is not
+generative is **conventional** and produces the declared ports by its own
+convention.
+
+Whether a kind is generative is the kind's concern; the provider registry (§12)
+records it. The factory states only `out: open`.
 
 ## 7. Units & steps
 
@@ -455,12 +550,14 @@ Rules:
   marked `?` (`name?: source`), which makes an absent source drop the binding
   without gating the node. A node's bindings may not **all** be optional: at
   least one must be required (§11).
-- **A leaf provides its runner's interface.** When the runner declares `in:` /
-  `out:` (§6), the leaf binds every required field; a **generic** runner declares
-  neither, and the leaf declares its own ports (§6.3).
-- **Closed.** A leaf's fields are the ones its runner's kind declares, and a step
-  binds only ports its unit declares. An undeclared name is a load-time error;
-  nothing is silently ignored (§6.3).
+- **A leaf provides its runner's interface.** Against a typed `in:` (§6), the
+  leaf binds every required field and may bind more; against an `open` `in:` it
+  declares its own. A typed `out:` is the leaf's fixed shape (it declares none);
+  an `open` `out:` is the leaf's to declare (§6.4).
+- **Closed (§6.3).** A runner, trigger, sink and step carry only their structural
+  keys plus `config`; a `unit` / `loop` carries none. A step binds only ports its
+  unit declares. An undeclared name is a load-time error; nothing is silently
+  ignored.
 - **`use:`** references any unit by name. Leaf and composite references are
   identical in form.
 - **A unit may invoke itself.** `use:` may name the enclosing unit, directly or
@@ -485,13 +582,13 @@ external port loop_count(task_id: text) -> int
 
 trigger on_issue:
   kind: linear
-  board: "ENG"
+  config: { board: "ENG" }
   out: { issue: Issue }
 
 step run:                          # the root invocation of the workflow
   runner: platform
+  config: { command: "factory-run" }
   in:
-    command: "factory-run"
     issue: on_issue.issue
     repo:  checkout(issue: on_issue.issue)         # external port -> Folder
     mcp:   github_mcp()                            # external port -> Mcp
@@ -512,11 +609,11 @@ Block fields:
 
 | block | fields |
 | --- | --- |
-| `runner` | `kind` (final), `extends?`, `in` / `out` (a type — the implementation's interface), `config` (a typed value), and the fields its kind declares |
-| `trigger` | `kind`, `extends?`, `out` (types), and the config fields its kind declares |
-| `sink` | `kind`, `extends?`, `in` (bindings), `when` (exit condition), and the config fields its kind declares |
-| `unit` | `runner` **xor** a composite (nested `step` / `sink` entries), `extends?`, `in` (types), `out` (types, or type = binding for a composite), and the runner's kind fields |
-| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s / `sink`s, `in` (bindings), `out` (types)) — valid at the root and inside a composite |
+| `runner` | `kind` (final), `extends?`, `in` / `out` (a type — the implementation's interface), `config` (a typed static value) |
+| `trigger` | `kind`, `extends?`, `out` (types), `config` |
+| `sink` | `kind`, `extends?`, `in` (bindings), `when` (exit condition), `config` |
+| `unit` / `loop` | `runner` **xor** a composite (nested `step` / `sink` entries), `extends?`, `in` (types), `out` (types, or type = binding for a composite) |
+| `step` | `use` (reference) **xor** an inline unit (`runner` or nested `step`s / `sink`s, `in` (bindings), `out` (types)), `config` — valid at the root and inside a composite |
 
 ```ebnf
 module        = { import } { declaration } ;
@@ -541,15 +638,16 @@ extends       = "extends" qual ;
 
 in            = "in" ":" ( types | bindings ) ;
 out           = "out" ":" ( types | out_bindings ) ;
-# within a runner block, `in:` / `out:` hold a single Type — the
-# implementation's interface: iface = ( "in" | "out" ) ":" Type ;
+# within a runner block, `in:` / `out:` hold a single Type or `open` — the
+# implementation's interface: iface = ( "in" | "out" ) ":" ( Type | "open" ) ;
 when          = "when" ":" expr ;
 types         = map( ident [ "?" ] ":" Type ) ;
 bindings      = map( binding ) ;
 binding       = [ "prev" ] ident [ "?" ] ":" [ Type "=" ] source [ "if" expr ] ;
               # `prev` marks a loop-carried (feedback) edge (§10.1); `Type =` is
               # an optional upper bound on the bound value. `prev` is a reserved
-              # word: a port or binding may not be named `prev`.
+              # word: a port or binding may not be named `prev`. A target is a
+              # single port name: a record is supplied whole (§8).
 out_bindings  = map( ident [ "?" ] ":" Type "=" source [ "if" expr ] ) ;  # names may repeat (coalesce)
 map(X)        = "{" [ X { ("," | NEWLINE) X } ] "}"      # inline
               | NEWLINE INDENT { X NEWLINE } DEDENT ;    # block
@@ -566,6 +664,8 @@ record        = "{" [ vfield { ("," | NEWLINE) vfield } ] "}"
 vfield        = ident ":" [ Type "=" ] value ;
 
 source        = additive ;          # binding source: a value, plus qual / path / call
+              # a record or list in a source position holds *sources* in its
+              # leaves (each may be a path, a call or a literal), nested freely
 path          = [ ident "::" ] ( ident | "in" | "out" | "abort" | "this" ) { "." ( ident | NUMBER ) } ;
 call          = qual "(" [ ident ":" source { "," ident ":" source } ] ")" ;
 
@@ -588,6 +688,22 @@ not     = [ "not" ] test ;
 test    = additive [ cmp additive | "is" ident ] ;
 cmp     = "<" | ">" | "<=" | ">=" | "==" | "!=" ;
 ```
+
+**A source may be a record or a list.** `repo: { url: … }` builds the record
+inline, and its leaves are themselves **sources** — paths, calls or literals —
+nested to any depth (`opts: { retries: run.n, tags: ["a", "b"] }`). A complex
+value is therefore assembled at the binding, with each leaf read when the node
+fires, and passed as one value. The value is present exactly when all its leaves
+are: an **absent leaf makes the whole value absent**, so the binding then drops
+or blocks as usual (§10). A literal record or list is **structural**, so it is
+checked at load time against the port's declared type — each leaf against its
+field, and a record's required fields against presence.
+
+**A target is one port name.** There is no second way to build a record: `in:`
+does not nest, so `repo.url:` is *not* a path into `repo` — a record-typed port
+is supplied whole, inline or from a producer that emits it. (`repo.url:` is
+therefore just an oddly-named extra input, and a typo like that is exactly what
+the declared interface catches.)
 
 **Reference semantics.** Except where this spec says otherwise, the semantics of
 values and expressions follow **Python 3** — numeric comparison across `int` and
@@ -698,10 +814,10 @@ Lexical rules:
 
 Notes:
 
-- **Every block is closed (§6.3).** A block's fields are the spec-defined ones
-  plus those its kind declares; an unknown or misspelled field is a load-time
-  error, never silently ignored. `in` / `out` (a runner's interface) and
-  `config` (a runner's static configuration) are structural keys.
+- **Every block is closed (§6.3).** A runner, trigger, sink and step carries its
+  structural keys plus the single key `config` (its static data); a `unit` /
+  `loop` carries none. An unknown or misspelled field is a load-time error,
+  never silently ignored.
 - **The root holds Trigger, Step and Sink; a composite body holds Step and
   Sink.** Triggers are root-only sources; steps are invocations; sinks are
   effects and may appear in any scope. A composite unit is invoked by a step.
@@ -710,10 +826,12 @@ Notes:
   with `name: Type = source`.
 - **A binding has exactly one source.** The same value may be bound by several
   consumers (fan-out); there is no multi-writer port.
-- **Config is literal data.** A `value` (config, a record field, runner/trigger
-  config) is a literal, `file`, list, record or arithmetic over those — never a
+- **Config is literal data.** A `config` value (a runner's, trigger's, sink's or
+  step's) is a literal, `file`, list, record or arithmetic over those — never a
   `qual`, `path` or external-port `call`. Those appear only as a binding
-  **source**.
+  **source**. `config` is therefore **static**: evaluated at load time, fixed
+  before the Run, and never part of the dataflow graph — the difference between
+  a knob and an input.
 - **A `choice` value is a single-key record** `{ tag: { …fields } }`, tested with
   `is <tag>` (§4). A binding source is a path or call, not a literal record, so
   choice values cross bindings as data emitted by a node rather than authored
@@ -978,13 +1096,13 @@ step run:
 
 sink succeeded:                     # downstream of the scope: fires once
   kind: file
-  path: "out/succeeded.json"
+  config: { path: "out/succeeded.json" }
   in:  { verdict: run.verdict }
   when: run.verdict is succeeded
 
 sink failed:
   kind: file
-  path: "out/failed.json"
+  config: { path: "out/failed.json" }
   in:  { verdict: run.verdict }
   when: run.verdict is failed
 ```
@@ -1003,7 +1121,7 @@ outcome.
 ```
 sink aborted:
   kind: file
-  path: "out/aborted.json"
+  config: { path: "out/aborted.json" }
   in:  { reasons: abort.reasons }     # present only while the Run is aborting
 ```
 
@@ -1022,8 +1140,11 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 - Every block is closed (§6.3): each field is spec-defined or declared by its
   kind, and each binding names a declared port (or a field of the runner's `in:`
   interface). An undeclared name is a spec error.
+- Every runner declares its interface: `in:` and `out:`, each a type or `open`
+  (§6).
 - A leaf unit provides its runner's `in:` / `out:` interface (§6): every
-  required interface field is bound.
+  required interface field is bound, a typed `out:` is inherited (the leaf
+  declares none), and an `open` `out:` is declared by the leaf (§6.4).
 - Required ports must be bound by a step.
 - A node with bindings has at least one that is **not optional** (`?`): an
   all-optional binding set is a spec error, because an absent optional would be
@@ -1067,14 +1188,17 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 - Further operators: arithmetic (`+ - * / %`) is specified; bitwise, string
   concatenation and other operators are not.
 - Run status, cancellation and resume.
-- Provider registry API (how adapters are registered and resolved, and how a
-  kind declares the config fields it accepts — the §6.3 closure).
+- Provider registry API (how adapters are registered and resolved, how a kind
+  declares the **schema of a block's `config`** — the §6.3 closure — and whether
+  an open-output kind is **generative**, §6.4, and so which port types it
+  accepts).
 - Value representation and content-addressing.
 - Trigger seed syntax (how a trigger supplies its `out` ports at admission).
 - Remaining `abort` fields: `reasons: [text]` is defined; the rest of the shape
   is open.
 - `unit` ← `unit` inheritance detail (whether `in` / `out` ports merge by name).
 - Bare `out:` subsetting: what supplies a port declared with no `=`.
+- A spelling for a genuinely output-less runner (`out:` is required, §6).
 - Referencing a sink's `terminated_at` to order work after an effect: sinks are
   effect nodes that fire, but are not yet binding sources.
 - The abort pass across scopes: whether an abort fires abort-routed sinks in
@@ -1174,6 +1298,8 @@ type DockerEnv = {
 
 runner platform:                  # the platform's root runner
   kind:   docker
+  in:     open
+  out:    open
   config: DockerEnv = {
     image:   "factory-vm:base"
     cpu:     2
@@ -1184,6 +1310,8 @@ runner platform:                  # the platform's root runner
 
 runner builder:                   # build/test: toolchains + dependency cache
   extends: platform
+  in:      open
+  out:     open
   config:  DockerEnv = {
     image:  "factory-vm:builder"
     mounts: ["/cache/deps"]
@@ -1240,29 +1368,33 @@ loop deliver:
   # ---- quality gates: all four run in parallel on the produced commit
   step lint:
     runner: r::builder
-    in:  { command: "make lint", commit: implement.commit }
+    config: { command: "make lint" }
+    in:  { commit: implement.commit }
     out: { result: t::GateResult }
 
   step typecheck:
     runner: r::builder
-    in:  { command: "make typecheck", commit: implement.commit }
+    config: { command: "make typecheck" }
+    in:  { commit: implement.commit }
     out: { result: t::GateResult }
 
   step unittests:
     runner: r::builder
-    in:  { command: "make test", commit: implement.commit }
+    config: { command: "make test" }
+    in:  { commit: implement.commit }
     out: { result: t::GateResult }
 
   step uat:
     runner: r::builder
-    in:  { command: "make uat", commit: implement.commit }
+    config: { command: "make uat" }
+    in:  { commit: implement.commit }
     out: { result: t::GateResult }
 
   # ---- join the gates (all-of)
   step gate:
     runner: r::platform
+    config: { command: "factory-gate" }
     in:
-      command:   "factory-gate"
       lint:      lint.result
       typecheck: typecheck.result
       unittests: unittests.result
@@ -1274,24 +1406,24 @@ loop deliver:
   # ---- open the PR only if every gate passed
   step open_pr:
     runner: r::platform
+    config: { command: "gh pr create --fill" }
     in:
-      command: "gh pr create --fill"
       commit:  implement.commit if gate.passed
     out: { pr: t::PullRequest }
 
   # ---- failure exits: fire when a retry budget is exhausted
   step plan_failure:
     runner: r::platform
+    config: { command: "factory-fail plan" }
     in:
-      command: "factory-fail plan"
       ticket:  in.ticket
       verdict: review.verdict if review.verdict is rejected and plan.attempt >= 3
     out: { failure: t::Failure }
 
   step build_failure:
     runner: r::platform
+    config: { command: "factory-fail build" }
     in:
-      command: "factory-fail build"
       ticket:  in.ticket
       report:  gate.report if not gate.passed and implement.attempt >= 3
     out: { failure: t::Failure }
@@ -1306,22 +1438,22 @@ step run:                             # root invocation: binds the workflow's in
 
 sink write_result:
   kind: file
-  path: "out/result.json"
+  config: { path: "out/result.json" }
   in:  { commit: run.commit, pr: run.pr }
 
 sink plan_needs_attention:
   kind: file
-  path: "out/plan_needs_attention.json"
+  config: { path: "out/plan_needs_attention.json" }
   in:  { failure: run.plan_failure }
 
 sink build_needs_attention:
   kind: file
-  path: "out/build_needs_attention.json"
+  config: { path: "out/build_needs_attention.json" }
   in:  { failure: run.build_failure }
 
 sink aborted:
   kind: file
-  path: "out/aborted.json"
+  config: { path: "out/aborted.json" }
   in:  { reasons: abort.reasons }
 ```
 
@@ -1329,6 +1461,39 @@ sink aborted:
 
 ## Changelog
 
+- **v1.25** — **runner interfaces are explicit, and outputs are fixed or open.**
+  Every runner declares `in:` and `out:`, each a type or the keyword `open`; an
+  omitted side is a spec error (no implicit default). A typed `out:` is a
+  **fixed** shape every leaf inherits; `out: open` fixes no shape — each leaf
+  declares its own `out:`, and the implementation produces a value for every
+  declared port (§6.4). An open-output kind may be **generative**: it derives
+  what to produce from the declared ports, which is how an agent's leaf types
+  become the structure the model must return. A typed `in:` remains a minimum —
+  the leaf binds its required fields and may pass more.
+- **v1.24** — **`credential` is scoped.** A deployment may keep named secrets at
+  several scopes; the expected precedence, narrowest first, is **factory → user
+  → organization**, then the deployment environment. A factory reads only its
+  own tenant's secrets, the value stays a `secret` (redacted everywhere
+  observed), and a management interface exposes metadata but never a value
+  (§4.3). Implementations may scope differently — a local run need not have a
+  factory or organization tier.
+- **v1.23** — **a binding source may be a record or a list.** `repo: { url: …,
+  ref: … }` builds the value inline from sources (paths, calls, literals), nested
+  to any depth; each leaf is read when the node fires, and an absent leaf makes
+  the whole value absent. A literal record or list is structural, so it is
+  checked at load time against the declared type (§8). The grammar already
+  admitted `record` / `list` in a source position; the parser now does too. A
+  target stays a **single port name** — a record is supplied whole, never filled
+  field by field.
+- **v1.22** — **`config` is the one static key.** A `runner`, `trigger`, `sink`
+  and `step` carry their static data under a single `config:` key: `trigger` and
+  `sink` gain it, and a runner's kind fields (`image`, …) and a leaf's `command`
+  move *inside* it. A `unit` / `loop` is a pure definition and carries no such
+  field. Every block is now closed to a **fixed** key set, so the parser enforces
+  §6.3 syntactically, with no kind registry; what a block's `config` may contain
+  becomes the provider registry's concern (§12). `config` is **literal data**
+  (§8): static, read before the Run, and never a binding source — the dynamic
+  channel stays `in` / `out`.
 - **v1.21** — **`loop` is a declaration keyword.** `loop name:` declares a
   composite unit that **must** contain a `prev` cycle — a load-time error
   without one — while `unit name:` may or may not loop. Otherwise identical:

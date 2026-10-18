@@ -430,7 +430,8 @@
           <div class="top"><span class="glyph g-runner">⚙</span><h3>Runner</h3></div>
           <p>How a step runs: a shell command, a container, or an agent behind a typed interface.</p>
           <pre><span class="kw">runner</span> agent:
-  kind: <span class="st">opencode</span></pre>
+  kind: <span class="st">opencode</span>
+  out:  <span class="kw">open</span></pre>
         </div>
         <div class="vcard">
           <div class="top"><span class="glyph g-bind">↦</span><h3>Binding</h3></div>
@@ -491,40 +492,41 @@
             <div class="cl" data-stage="runner"><span class="ln"> 5</span><span class="kw">runner</span> agent:</div>
             <div class="cl" data-stage="runner"><span class="ln"> 6</span>  kind: <span class="st">opencode</span></div>
             <div class="cl" data-stage="runner"><span class="ln"> 7</span>  in:   AgentCall</div>
-            <div class="cl" data-stage="trigger"><span class="ln"> 8</span><span class="kw">trigger</span> issue_opened:</div>
-            <div class="cl" data-stage="trigger"><span class="ln"> 9</span>  kind: <span class="st">github</span></div>
-            <div class="cl" data-stage="trigger"><span class="ln">10</span>  <span class="kw">config</span>: { path: <span class="st">"/api/github/webhook"</span>, target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</div>
-            <div class="cl" data-stage="trigger types"><span class="ln">11</span>  out: { issue: Issue }</div>
-            <div class="cl" data-stage="loop"><span class="ln">12</span><span class="kw">loop</span> build:</div>
-            <div class="cl" data-stage="loop types"><span class="ln">13</span>  in:  { issue: Issue }</div>
-            <div class="cl" data-stage="loop"><span class="ln">14</span>  out:</div>
-            <div class="cl" data-stage="loop"><span class="ln">15</span>    result:   <span class="ty">text</span> = review.result</div>
-            <div class="cl" data-stage="loop"><span class="ln">16</span>    approved: <span class="ty">bool</span> = review.approved</div>
-            <div class="cl" data-stage="steps loop"><span class="ln">17</span>  <span class="kw">step</span> draft:</div>
-            <div class="cl" data-stage="steps runner"><span class="ln">18</span>    runner: agent</div>
-            <div class="cl" data-stage="steps"><span class="ln">19</span>    in:</div>
-            <div class="cl" data-stage="steps"><span class="ln">20</span>      prompt: <span class="st">"Draft a reply for the issue."</span></div>
-            <div class="cl" data-stage="steps"><span class="ln">21</span>      issue:  in.issue</div>
-            <div class="cl" data-stage="steps port"><span class="ln">22</span>      token:  credential(key: <span class="st">"opencode"</span>)</div>
-            <div class="cl" data-stage="steps loop"><span class="ln">23</span>      <span class="kw">prev</span> feedback: review.result <span class="kw">if</span> <span class="fn">not</span> review.approved <span class="kw">and</span> draft.attempt &lt; 3</div>
-            <div class="cl" data-stage="steps"><span class="ln">24</span>    out: { draft: <span class="ty">text</span> }</div>
-            <div class="cl" data-stage="steps loop"><span class="ln">25</span>  <span class="kw">step</span> review:</div>
-            <div class="cl" data-stage="steps runner"><span class="ln">26</span>    runner: agent</div>
-            <div class="cl" data-stage="steps"><span class="ln">27</span>    in: { prompt: <span class="st">"Approve the reply."</span>, text: draft.draft }</div>
-            <div class="cl" data-stage="steps loop"><span class="ln">28</span>    out: { approved: <span class="ty">bool</span>, result: <span class="ty">text</span> }</div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">29</span>  <span class="kw">sink</span> progress:</div>
-            <div class="cl" data-stage="sinks steps"><span class="ln">30</span>    kind: <span class="st">file</span></div>
-            <div class="cl" data-stage="sinks steps"><span class="ln">31</span>    <span class="kw">config</span>: { path: <span class="st">"out/progress.json"</span> }</div>
-            <div class="cl" data-stage="sinks steps"><span class="ln">32</span>    in: { attempt: draft.attempt, draft: draft.draft }</div>
-            <div class="cl" data-stage="loop"><span class="ln">33</span><span class="kw">step</span> run:</div>
-            <div class="cl" data-stage="loop"><span class="ln">34</span>  use: build</div>
-            <div class="cl" data-stage="loop trigger"><span class="ln">35</span>  in: { issue: issue_opened.issue }</div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">36</span><span class="kw">sink</span> notify:</div>
-            <div class="cl" data-stage="sinks"><span class="ln">37</span>  kind: <span class="st">slack</span></div>
-            <div class="cl" data-stage="sinks"><span class="ln">38</span>  in:</div>
-            <div class="cl" data-stage="sinks"><span class="ln">39</span>    channel: <span class="st">"#support"</span></div>
-            <div class="cl" data-stage="sinks"><span class="ln">40</span>    handles: [ <span class="st">"@oncall"</span>, <span class="st">"@platform"</span> ]</div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">41</span>    text:    run.result</div>
+            <div class="cl" data-stage="runner"><span class="ln"> 8</span>  out:  <span class="kw">open</span></div>
+            <div class="cl" data-stage="trigger"><span class="ln"> 9</span><span class="kw">trigger</span> issue_opened:</div>
+            <div class="cl" data-stage="trigger"><span class="ln">10</span>  kind: <span class="st">github</span></div>
+            <div class="cl" data-stage="trigger"><span class="ln">11</span>  <span class="kw">config</span>: { path: <span class="st">"/api/github/webhook"</span>, target: { one: { repo: <span class="st">"acme/widgets"</span> } } }</div>
+            <div class="cl" data-stage="trigger types"><span class="ln">12</span>  out: { issue: Issue }</div>
+            <div class="cl" data-stage="loop"><span class="ln">13</span><span class="kw">loop</span> build:</div>
+            <div class="cl" data-stage="loop types"><span class="ln">14</span>  in:  { issue: Issue }</div>
+            <div class="cl" data-stage="loop"><span class="ln">15</span>  out:</div>
+            <div class="cl" data-stage="loop"><span class="ln">16</span>    result:   <span class="ty">text</span> = review.result</div>
+            <div class="cl" data-stage="loop"><span class="ln">17</span>    approved: <span class="ty">bool</span> = review.approved</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">18</span>  <span class="kw">step</span> draft:</div>
+            <div class="cl" data-stage="steps runner"><span class="ln">19</span>    runner: agent</div>
+            <div class="cl" data-stage="steps"><span class="ln">20</span>    in:</div>
+            <div class="cl" data-stage="steps"><span class="ln">21</span>      prompt: <span class="st">"Draft a reply for the issue."</span></div>
+            <div class="cl" data-stage="steps"><span class="ln">22</span>      issue:  in.issue</div>
+            <div class="cl" data-stage="steps port"><span class="ln">23</span>      token:  credential(key: <span class="st">"opencode"</span>)</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">24</span>      <span class="kw">prev</span> feedback: review.result <span class="kw">if</span> <span class="fn">not</span> review.approved <span class="kw">and</span> draft.attempt &lt; 3</div>
+            <div class="cl" data-stage="steps"><span class="ln">25</span>    out: { draft: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">26</span>  <span class="kw">step</span> review:</div>
+            <div class="cl" data-stage="steps runner"><span class="ln">27</span>    runner: agent</div>
+            <div class="cl" data-stage="steps"><span class="ln">28</span>    in: { prompt: <span class="st">"Approve the reply."</span>, text: draft.draft }</div>
+            <div class="cl" data-stage="steps loop"><span class="ln">29</span>    out: { approved: <span class="ty">bool</span>, result: <span class="ty">text</span> }</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">30</span>  <span class="kw">sink</span> progress:</div>
+            <div class="cl" data-stage="sinks steps"><span class="ln">31</span>    kind: <span class="st">file</span></div>
+            <div class="cl" data-stage="sinks steps"><span class="ln">32</span>    <span class="kw">config</span>: { path: <span class="st">"out/progress.json"</span> }</div>
+            <div class="cl" data-stage="sinks steps"><span class="ln">33</span>    in: { attempt: draft.attempt, draft: draft.draft }</div>
+            <div class="cl" data-stage="loop"><span class="ln">34</span><span class="kw">step</span> run:</div>
+            <div class="cl" data-stage="loop"><span class="ln">35</span>  use: build</div>
+            <div class="cl" data-stage="loop trigger"><span class="ln">36</span>  in: { issue: issue_opened.issue }</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">37</span><span class="kw">sink</span> notify:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">38</span>  kind: <span class="st">slack</span></div>
+            <div class="cl" data-stage="sinks"><span class="ln">39</span>  in:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">40</span>    channel: <span class="st">"#support"</span></div>
+            <div class="cl" data-stage="sinks"><span class="ln">41</span>    handles: [ <span class="st">"@oncall"</span>, <span class="st">"@platform"</span> ]</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">42</span>    text:    run.result</div>
           </div>
         </div>
 
