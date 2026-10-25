@@ -410,7 +410,7 @@
       <div class="vocab">
         <div class="vcard">
           <div class="top"><span class="glyph g-type">T</span><h3>Type</h3></div>
-          <p>Structural records. Fields and shapes — no classes, inheritance, or constructors.</p>
+          <p>Structural records, lists and maps. Fields and shapes — no classes, inheritance, or constructors.</p>
           <pre><span class="kw">type</span> Issue = { number: <span class="ty">int</span> }</pre>
         </div>
         <div class="vcard">
@@ -431,6 +431,7 @@
           <p>How a step runs: a shell command, a container, or an agent behind a typed interface.</p>
           <pre><span class="kw">runner</span> agent:
   kind: <span class="st">opencode</span>
+  in:   <span class="kw">open</span>
   out:  <span class="kw">open</span></pre>
         </div>
         <div class="vcard">
@@ -682,7 +683,7 @@
     port: {
       tag: "external port credential(key) -> secret",
       title: "External ports bridge to the outside",
-      body: "A port is declared by the factory and implemented by the host — here it reads <code>FCT_CREDENTIAL_&lt;KEY&gt;</code>. A <code>secret</code> is opaque: redacted in logs, traces and the store, and impossible to compare or convert to text. You can pass it, never print it."
+      body: "A port is declared by the factory and implemented by the host — here it reads the credential from the Run's tenant scopes (factory → user → organization). A <code>secret</code> is opaque: redacted in logs, traces and the store, and impossible to compare or convert to text. You can pass it, never print it."
     },
     runner: {
       tag: "runner agent: kind: opencode",

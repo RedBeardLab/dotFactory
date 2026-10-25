@@ -1,6 +1,6 @@
 # Factory Shape — Specification
 
-Status: **draft v1.25**, frozen for implementation planning. See the
+Status: **draft v1.35**, frozen for implementation planning. See the
 [Changelog](#changelog) for version history.
 
 Scope: the *execution shape* of the factory — modules, triggers, units, steps,
@@ -29,7 +29,7 @@ node that invokes it, and only its boundary ports cross. The core is a pure
 
 | role | provides |
 | --- | --- |
-| **Core (factory)** | types & conformance, the graph, the scheduler, the `time` type, `terminated_at`, `attempt`, `abort`, and the composite (engine) runner |
+| **Core (factory)** | types & conformance, pure value built-ins (list and map operations), the graph, the scheduler, the `time` type, `terminated_at`, `attempt`, `abort`, and the composite (engine) runner |
 | **Implementor** | the four extension points: trigger kinds, sink kinds, external ports, runner implementations |
 | **Author** | data: types, units, runners, triggers, sinks, bindings |
 
@@ -82,6 +82,18 @@ rejected. `time` is an **instant**, written as an
 strings sort lexicographically in chronological order, and equivalent instants
 written with another offset or fractional precision compare equal.
 
+**There is no byte type.** The language deliberately does not represent raw
+bytes. dotFactory is a control plane: the values it carries are configuration,
+events and results, and binary payloads are uncommon enough that a seventh
+primitive is not justified yet. `text` is always UTF-8, so there is no opaque
+byte string to bind; binary content that must cross a boundary has to be encoded
+(base64, say) or kept outside the language. When a step must move binary data —
+uploading an artifact to S3, for example — it does so inside a VM-based runner
+step (the Docker runner, §6): the runner has a real filesystem and process, and
+its command hands the bytes to the external tool directly, without the bytes
+crossing a binding. A `bytes` type can be added later, additively, if a clear
+need appears that this route cannot serve (§12).
+
 ```
 type Issue   = { id: text, title: text, body: text?, labels: [text] }
 type Commit  = { sha: text }
@@ -92,6 +104,7 @@ type Mcp     = { url: text }
 type Severity = enum { low, medium, high }
 type Finding  = { severity: Severity, location: text, description: text? }
 
+type Labels   = map(text, text)
 type Verdict  = choice {
   succeeded { summary: text, findings: [Finding] }
   failed    { error: text }
@@ -100,11 +113,12 @@ type Verdict  = choice {
 ```
 
 ```ebnf
-Type      = Primitive | Record | List | Optional | Enum | Choice | TypeRef ;
+Type      = Primitive | Record | List | Map | Optional | Enum | Choice | TypeRef ;
 Primitive = "text" | "int" | "float" | "bool" | "time" | "secret" ;
 Record    = "{" { field } "}" ;                 # fields newline- or comma-separated
 field     = ident [ "?" ] ":" Type ;            # "?" = optional
 List      = "[" Type "]" ;
+Map       = "map" "(" Type "," Type ")" ;       # key must resolve to `text`
 Optional  = Type "?" ;
 Enum      = "enum" "{" ident { ("," | NEWLINE) ident } "}" ;
 Choice    = "choice" "{" { ident Record } "}" ; # tagged union
@@ -120,6 +134,12 @@ is always **structural** (duck-typed).
 - **Enum / choice tag (closed):** membership and tag are exact — the only closed
   sets.
 - **List / optional:** element-wise / absent-or-conforming.
+- **Map (text keys):** a value whose keys are text and whose values all conform
+  to the declared value type; the key set is not declared. A map's key type must
+  resolve to `text`. A map conforms structurally, and an empty structure
+  conforms to any map. A lookup through a path (`m.key`) is partial: a missing
+  key is absence (§4.1); the `map::at` built-in is total and returns `None` for
+  a missing key (§8.2).
 - **`secret` (opaque):** conforms only to `secret`. `text` and `secret` do not
   inter-convert, and there is no secret literal — a secret enters only as data
   (§4.2).
@@ -127,29 +147,68 @@ is always **structural** (duck-typed).
   where the type is `T?` or the record field is declared `name?`. A `None`
   in any other position is a runtime error: trigger seeds are checked at
   admission, unit inputs at binding time, leaf/composite outputs at
-  production — all abort before further code executes. Absence (`MISSING`)
-  is separate from `None` and follows the firing rule (§10); §4.1 defines the
-  two, and §8 defines how each behaves in expressions.
+  production — all abort before further code executes. **Absence** is separate
+  from `None` and follows the firing rule (§10); §4.1 defines the two, and §8
+  defines how each behaves in expressions. A field declared `name?` is sugar
+  for `name: T?`.
+- **`T?` is `some(T) | none`.** The option is typed as a sum, with a canonical
+  null encoding: `none` is JSON `null`, `some(x)` is `x`. Nested options flatten
+  (`T??` = `T?`), because JSON cannot represent `some(none)`. Stepping *through*
+  an option requires `?.`; plain `.` on an option is an error. `is some` /
+  `is none` branch, and `opt::value(x)` unwraps (`none` is absent). An option in
+  a boolean context is an error. `some` and `none` are reserved choice-tag
+  names.
 
 ### 4.1 `None` and absence
 
 Two different things can be unstated, and the spec keeps them apart:
 
-- **Absent (`MISSING`)** is *not a value*. Evaluating a path yields it when the
-  port or field it names has no value on this Run — a producer that has not
-  fired, or an optional (`?`) port/field left unproduced. `MISSING` **never
-  crosses a binding**: when a binding's source evaluates to `MISSING` the
-  binding is dropped or the node is disabled (§10), so no consumer ever receives
-  it as a value. It exists only for the duration of evaluating an expression (a
+- **Absent** is *not a value*. It is what evaluation reports when the port or
+  field it names has no value on this Run — a producer that has not fired, or an
+  optional (`?`) port/field left unproduced. Absence **never crosses a
+  binding**: when a binding's source is absent the binding is dropped or the
+  node is disabled (§10), so no consumer ever receives it as a value. It is an
+  evaluation outcome, not a member of the value domain: it is never stored in a
+  record, list or map, never written to the journal, and never exposed at an
+  external boundary. It exists only for the duration of probing an expression (a
   binding source, a guard, a `when`).
 - **`None`** *is a value*. It is legal only in a `?` position — a `T?` port, or a
-  record field declared `name?` — and it crosses bindings like any other value.
+  field whose type is optional — and it crosses bindings like any other value.
   There is no `None` literal in the DSL: `None` enters the factory only as data,
-  through a trigger seed, an external-port return, or a leaf/composite output
-  (§11).
+  through a trigger seed, an external-port return, a leaf/composite output, or a
+  core built-in (`list::find`, `list::at`, `map::at`) (§11).
+- **Optional fields are values.** `name?: T` is sugar for `name: T?`. At a typed
+  boundary, an omitted field whose type is optional decodes to `none`. **Every
+  typed boundary is strict**: a present record missing a required field is an
+  error — at admission, at binding time, at production, and on an
+  external-port return — so a partial payload never becomes a Run or a value.
+  An **absent producer** is a different thing: it is absence, and the firing
+  rule decides (§10). Navigating an optional field never reports absence: it
+  yields the `none` value.
 
-So `T?` denotes the set *{ a `T`, `None` }*, and absence is a separate axis: a
-port either produced a value (possibly `None`) or it did not.
+So `T?` denotes the set *{ a `T`, `None` }* — `some(T) | none` — and absence is
+a separate axis: a port either produced a value (possibly `none`) or it did not.
+
+**Navigating an option.** `?.` is the explicit optional hop:
+
+```
+a: A?;  A.b: B?;  B.c: text
+a?.b?.c          # text?: one flattened option
+```
+
+Every hop whose input may be `none` is written `?.`; a plain `.` on an option is
+a validation error. The result is optional iff a `?.` was used. A `none` at a
+hop short-circuits the whole path to `none` (a value), not to absence. The
+alternatives for a `T?` are `is some` / `is none`, and `opt::value(x)` to unwrap
+(a `none` makes the call absent, so the binder drops or blocks it). There is no
+flow-sensitive narrowing, and an option is not a boolean: write
+`x is some`, never `when: x`.
+
+At one probe, "not available yet" and "will never be produced" are the same
+answer. The planner re-probes after every firing; if the Run reaches quiescence
+and no producer supplied the value, the consumer is skipped. That is what makes
+absence a **scheduling fact, not data** — and why it is not a third kind of
+value.
 
 An **external boundary renders the two the same.** When a sink or adapter must
 serialize an input that was dropped as optional (absent), it presents it as
@@ -176,9 +235,9 @@ the Run's event log and store, a trace, an error message, a status page, the web
 UI — a secret is rendered as a fixed marker of exactly **eight** characters
 (`"********"`), never its content. The marker's length is **independent of the
 secret's**, so a redacted value never leaks how long the secret was.
-Redaction is **transitive through containers**: a secret nested in a record or a
-list is redacted at that leaf, so a structure may be reported whole while its
-secrets are hidden. Redaction is **not** a value-flow rule: **every receiver gets
+Redaction is **transitive through containers**: a secret nested in a record, a
+list or a map is redacted at that leaf, so a structure may be reported whole
+while its secrets are hidden. Redaction is **not** a value-flow rule: **every receiver gets
 the secret as a secret**, never a bare value — an external-port argument, a
 leaf's inputs, a sink input. The receiver therefore knows the value is sensitive,
 and unwraps it to *use* it; that is the adapter's concern. What a receiver
@@ -217,11 +276,14 @@ use — not the mechanism behind either.
 - **Write-only at the interface.** A management interface (the deployment's API
   or UI) exposes a stored secret's *metadata* — its key and label — but never
   its value. A value cannot be read back; replacing one overwrites it.
+- **Never the environment.** A `credential(key)` is resolved only from the
+  stored scopes below, never from the process environment. The environment is
+  global and not tenant-scoped, so a key there would be readable by every
+  tenant; a hosted deployment must not use it.
 
 **Scopes and precedence (expected).** A deployment may keep secrets at several
 **scopes**. A hosted deployment is expected to resolve a `credential(key)` from
-the **narrowest scope to the widest**, first match winning, and only then from
-the deployment environment (`FCT_CREDENTIAL_<KEY>`), which is not tenant-scoped:
+the **narrowest scope to the widest**, first match winning:
 
 1. **factory** — the factory being run (most specific to the Run);
 2. **user** — the person the Run acts for;
@@ -239,9 +301,40 @@ above are what a factory relies on; the precedence above is the *expected*
 default, not a mandate. A factory run locally on an end user's machine, for
 example, may resolve only from that user's own scope (a keychain, a local file)
 and need no factory or organization tier at all — and may order what it has
-differently. Authentication, tenancy, at-rest protection (encryption, a KMS,
+differently. The environment is never a scope, local or hosted. Authentication,
+tenancy, at-rest protection (encryption, a KMS,
 rotation) and who may manage a scope are likewise deployment concerns, out of
 scope here.
+
+### 4.4 Deployment configuration
+
+A `config(key, default?)` external port reads a **configuration value**: text a
+deployment keeps for the Run's tenant, outside the factory source. It is the
+non-sensitive counterpart of the credential store (§4.3) — the place for a model
+name, a base URL, a feature flag, or a whole `opencode.json` document.
+
+**Invariants (normative).**
+
+- **A factory reads only its own tenant's values.** Whatever key it names, a
+  `config(key)` never returns a value from a scope the Run does not belong to.
+  The scopes and precedence are those of §4.3 (factory → user → organization),
+  first match winning.
+- **A wider tier is allowed.** Because a configuration value is not a
+  credential, a deployment may append a deployment-wide tier *below* the tenant
+  scopes (a file, the process environment, a defaults table). A tenant's value
+  still wins, and no tenant sees another tenant's value.
+- **The value is data.** The port returns `text`, not `secret`: it may be
+  compared, interpolated, written to a file, reported and edited. A credential
+  must never be kept here — that is what `credential(key)` is for.
+- **Text only.** A structured value is a text document (JSON, YAML, …) that the
+  factory writes whole or passes on. The language defines no parser or cast, so
+  a factory that needs structure outside a `filesystem` body reads it in the
+  adapter that consumes it.
+- **A missing key needs a default.** `default?` is an optional parameter. When
+  no scope (and no wider tier) holds the key, the port returns the default;
+  without one, the call fails the step. Absence is never fabricated.
+- **Plaintext management.** A management interface may show and edit values at
+  the scopes it administers; unlike a credential, a value can be read back.
 
 ## 5. Implicit ports
 
@@ -273,6 +366,17 @@ relative to the step whose binding is being evaluated:
 All three ids are **opaque** — factories must not parse them. Every node
 execution — trigger, step or sink — is a step and carries its own `step.id`.
 
+A sink may bind `this` like any other node. An adapter that emits an externally
+visible artifact can therefore **stamp the execution's identity** on it — for
+example, an S3 object's user metadata — so a downstream listener can recognize
+an effect its own factory produced and refuse to admit it as new input, rather
+than turning the factory into a feedback loop. The identity is also available
+to the adapter itself: the engine hands a sink its `run.id`, `node.id`,
+`step.id` and the factory digest, so the stamp is automatic rather than
+something every factory author must remember to bind. Which headers an adapter
+writes, and their names, are the adapter's concern; factories treat them as
+opaque.
+
 ## 6. Runners
 
 A **runner** is a named definition that selects a registered **implementation**
@@ -292,7 +396,8 @@ block carries **only** these fields — `kind` (final), `extends?`, `in`, `out`,
     declares no `out:`); `open` fixes no shape, so each leaf declares its own
     `out:` and the implementation produces a value for every declared port
     (§6.4).
-  A type given to either side names at least one field.
+  A type given to either side names at least one field. A map names no fields,
+  so a map is not an interface; use a record with a map-valued field instead.
 - **`config:`** — the runner's **static configuration**: a typed value
   (`config: DockerEnv = { … }`) that holds **every kind-specific knob** fixed
   **before the Run** (for `docker`, the `image` / `cpu` / `region` / … and the
@@ -385,6 +490,8 @@ Any named definition may `extends` **at most one** other definition of the
 - **Lists** are merged (parent then child).
 - **Records** are merged field-by-field: the child's fields override, the
   parent's other fields are kept.
+- **Maps** are scalars for inheritance: the child's map replaces the parent's;
+  they do not merge key-by-key.
 - **`final`** fields may not be overridden.
 - **Required (`!`)** fields must be satisfied by a concrete definition.
 
@@ -623,7 +730,9 @@ declaration   = type_decl | external_port | runner | trigger | sink | unit | loo
 type_decl     = "type" ident "=" Type ;
 external_port = "external" "port" ident "(" [ params ] ")" "->" Type ;
 params        = param { "," param } ;
-param         = ident ":" Type ;
+param         = ident [ "?" ] ":" Type ;
+              # `name?` is an optional parameter: a call may omit it, and an
+              # omitted argument is not passed to the implementation (§8).
 
 runner        = "runner" ident ":" block ;     # kind + in/out interface + config
 trigger       = "trigger" ident ":" block ;
@@ -648,34 +757,43 @@ binding       = [ "prev" ] ident [ "?" ] ":" [ Type "=" ] source [ "if" expr ] ;
               # an optional upper bound on the bound value. `prev` is a reserved
               # word: a port or binding may not be named `prev`. A target is a
               # single port name: a record is supplied whole (§8).
+seeded        = "prev" ident [ "?" ] ":" Type "=" value "then" source [ "if" expr ] ;
+              # a `prev` binding may seed its first firing (§10.1); the seed is
+              # literal data (`value`), so it holds no path or call, and the guard
+              # gates from the second firing. `then` is a reserved word.
 out_bindings  = map( ident [ "?" ] ":" Type "=" source [ "if" expr ] ) ;  # names may repeat (coalesce)
 map(X)        = "{" [ X { ("," | NEWLINE) X } ] "}"      # inline
               | NEWLINE INDENT { X NEWLINE } DEDENT ;    # block
 
 qual          = [ ident "::" ] ident ;
 # A value may be arithmetic; operators are whitespace-delimited (§8 notes).
-value         = additive ;          # config data: literal / file / list / record
+value         = additive ;          # config data: literal / file / list / record / map
 literal       = STRING | NUMBER | "true" | "false" | WORD ;
               # a `time` literal is a STRING in RFC 3339 form (§4); `-1` is a NUMBER
 list          = "[" [ value { "," value } ] "]"
               | NEWLINE INDENT { "-" value NEWLINE } DEDENT ;
 record        = "{" [ vfield { ("," | NEWLINE) vfield } ] "}"
               | NEWLINE INDENT { vfield NEWLINE } DEDENT ;
+map_value     = "{" [ vkey { ("," | NEWLINE) vkey } ] "}"
+              | NEWLINE INDENT { vkey NEWLINE } DEDENT ;
 vfield        = ident ":" [ Type "=" ] value ;
+vkey          = STRING ":" value ;   # a map literal entry; no per-entry type
 
 source        = additive ;          # binding source: a value, plus qual / path / call
-              # a record or list in a source position holds *sources* in its
-              # leaves (each may be a path, a call or a literal), nested freely
+              # a record, map or list in a source position holds *sources* in
+              # its leaves (each may be a path, a call or a literal), nested freely
 path          = [ ident "::" ] ( ident | "in" | "out" | "abort" | "this" ) { "." ( ident | NUMBER ) } ;
 call          = qual "(" [ ident ":" source { "," ident ":" source } ] ")" ;
+builtin_call  = ( "list" | "map" ) "::" ident "(" [ source { "," source } ] ")" ;  # positional (§8.1, §8.2)
 
 # Arithmetic, shared by values and guards: left-associative, `* / %` bind
 # tighter than `+ -`, unary `-` desugars to `0 - x`.
 additive       = multiplicative { ("+" | "-") multiplicative } ;
 multiplicative = unary { ("*" | "/" | "%") unary } ;
 unary          = [ "-" ] primary ;
-primary        = literal | "file" STRING | list | record | "(" expr ")"
-               | qual | path | call ;   # qual/path/call: only in a `source`
+primary        = literal | "file" STRING | list | record | map_value | "(" expr ")"
+               | qual | path | call | builtin_call ;
+               # qual/path/call/builtin_call: only in a `source` (not `config`)
 ```
 
 Guard expressions (`if`, `when`, `is`):
@@ -689,21 +807,31 @@ test    = additive [ cmp additive | "is" ident ] ;
 cmp     = "<" | ">" | "<=" | ">=" | "==" | "!=" ;
 ```
 
-**A source may be a record or a list.** `repo: { url: … }` builds the record
-inline, and its leaves are themselves **sources** — paths, calls or literals —
-nested to any depth (`opts: { retries: run.n, tags: ["a", "b"] }`). A complex
-value is therefore assembled at the binding, with each leaf read when the node
-fires, and passed as one value. The value is present exactly when all its leaves
-are: an **absent leaf makes the whole value absent**, so the binding then drops
-or blocks as usual (§10). A literal record or list is **structural**, so it is
-checked at load time against the port's declared type — each leaf against its
-field, and a record's required fields against presence.
+**A source may be a record, a map or a list.** `repo: { url: … }` builds the
+record inline, and its leaves are themselves **sources** — paths, calls or
+literals — nested to any depth (`opts: { retries: run.n, tags: ["a", "b"] }`).
+A map literal uses quoted keys (`{ "team": start.team }`) and has one value type.
+A complex value is therefore assembled at the binding, with each leaf read when
+the node fires, and passed as one value. The value is present exactly when all
+its leaves are: an **absent leaf makes the whole value absent**, so the binding
+then drops or blocks as usual (§10). A literal record, map or list is
+**structural**, so it is checked at load time against the port's declared type —
+each leaf against its field or value type, and a record's required fields
+against presence.
 
 **A target is one port name.** There is no second way to build a record: `in:`
 does not nest, so `repo.url:` is *not* a path into `repo` — a record-typed port
 is supplied whole, inline or from a producer that emits it. (`repo.url:` is
 therefore just an oddly-named extra input, and a typo like that is exactly what
 the declared interface catches.)
+
+**An external-port call may omit an optional parameter.** A parameter declared
+`name?: Type` is not required at the call; an omitted argument is not passed to
+the implementation, which supplies its own default. A required parameter must be
+present, every argument must name a declared parameter, and no argument may
+repeat. `config(key: text, default?: text) -> text` (§4.4) is the standard use:
+`config(key: "agent.model")` and `config(key: "agent.model", default: "…")` are
+both valid.
 
 **Reference semantics.** Except where this spec says otherwise, the semantics of
 values and expressions follow **Python 3** — numeric comparison across `int` and
@@ -761,9 +889,9 @@ with* that is forbidden.
 
 **Absence and `None` in expressions.** A guard may read a port that is absent on
 this Run (§10), or a `?` port that holds `None` (§4.1). Both read as "no value"
-in a boolean context, but they are not the same thing: absence (`MISSING`) is
-the non-firing of a producer and never crosses a binding, while `None` is a
-value that did. The operators treat them as follows:
+in a boolean context, but they are not the same thing: absence is the report
+that a producer did not supply a value on this Run and never crosses a binding,
+while `None` is a value that did. The operators treat them as follows:
 
 - **Boolean context.** A boolean context — a guard, a sink's `when`, `not`, or
   an `and`/`or` operand — takes a **`bool`**. An absent value and a `None` are
@@ -775,10 +903,16 @@ value that did. The operators treat them as follows:
   equal and two `None`s are equal; an absent value is unequal to every present
   value, and a `None` is unequal to every non-`None` present value. Because one
   is a value and the other is not, **a `None` and an absence are unequal to each
-  other** (`None == MISSING` is false).
+  other**.
 - **Ordering.** `<` `<=` `>` `>=` are **false** if either operand is absent or
   `None` (so `<` and `>=` may both be false).
-- **`is <tag>`.** False for an absent value or a `None`.
+- **`is <tag>`.** False for an absent value. On an option, `some` / `none` test
+  the payload (canonical null); on a choice, the tag must be one the choice
+  declares. `some` and `none` are reserved for options. A tag test on a type
+  that is neither a choice nor an option is an error.
+- **Options.** An option is not a boolean: a guard/when whose value is `T?` is a
+  validation error, even though `none` is falsy at runtime. Use `is some` /
+  `is none`.
 - **Arithmetic.** `+ - * / %` are defined only for **present** numeric operands:
   an absent or `None` operand is a runtime error that aborts the Run, exactly
   like a non-numeric operand (§4).
@@ -786,6 +920,156 @@ value that did. The operators treat them as follows:
 A guard that is absent, `None`, or false does not enable its node: a present
 source with a false guard disables the node, and an absent source drops the
 binding (§10).
+
+### 8.1 List built-ins
+
+The core provides a small, closed set of **pure list built-ins**. They are
+values, not extension points: a deployment does not register them, and they
+carry no external effect. `list` is a **reserved namespace** (as is `map`,
+§8.2); the form is `list::<name>(<arg>, …)` with **positional** arguments.
+
+| built-in | signature | meaning |
+| --- | --- | --- |
+| `list::append(xs, item)` | `([T], T) -> [T]` | a new list with `item` at the end |
+| `list::concat(xs, ys)` | `([T], [T]) -> [T]` | a new list, `xs` then `ys` |
+| `list::without(xs, item)` | `([T], T) -> [T]` | a new list with **all** structural matches removed |
+| `list::remove_at(xs, index)` | `([T], int?) -> [T]` | a new list without one position; `None` or out of range = unchanged |
+| `list::find(xs, item)` | `([T], T) -> int?` | the first structural match's index, or `None` |
+| `list::contains(xs, item)` | `([T], T) -> bool` | whether a structural match exists |
+| `list::at(xs, index)` | `([T], int?) -> T?` | the element at an index; `None` or out of range = `None` |
+| `list::length(xs)` | `([T]) -> int` | the number of elements |
+| `list::map(xs, x -> body)` | `([T], (T) -> U) -> [U]` | a new list with the callback applied to every element |
+| `list::compact(xs)` | `([T?]) -> [T]` | a new list without its `none` elements |
+
+**Callbacks.** `list::map`'s second argument is a **callback expression**, not a
+value: `x -> x.name`. The parser only accepts it where the built-in signature
+declares a callback, so it cannot be stored, returned, put in a record, or
+passed to a declaration, and there is no function type in the value model. The
+parameter is typed by the list's element type (one parameter, no index). The
+body is **pure**: paths (including the parameter's fields), literals,
+arithmetic, container construction and pure built-ins. An external-port call in
+the body is a validation error, so a callback can never hide an effect fan-out.
+Capture of outer sources is allowed; the parameter shadows them. Nested
+callbacks are ordinary nesting. An absent body (the probe) makes the whole call
+absent, exactly like an absent argument; a `none` element is an ordinary value.
+`filter`, `any`, `all` and a narrowing `filter` are follow-ups.
+
+**Consuming options in a list.** `list::compact(xs)` drops the `none` elements
+of a `[T?]` and returns `[T]`; order is preserved and the input is unchanged. An
+absent `xs` makes the call absent (the probe), not `[]`. It is the consumption
+idiom for a mapped or looked-up list, and it needs no narrowing: the input type
+already says the elements are optional.
+
+```fct
+in:
+  labels:  list::append(ticket.labels, "urgent")
+  open:    list::without(review.findings, finding)
+  idx:     list::find(issues, ticket)                    # int?
+  found:   list::at(issues, list::find(issues, ticket))  # Issue?
+  pruned:  list::remove_at(issues, list::find(issues, ticket))
+  known:   list::contains(seen.ids, ticket.id)
+  empty:   list::length(review.findings) == 0
+```
+
+**Purity.** Every built-in returns a **new list**; it never changes its input.
+Order is preserved. Lists are values under the same fan-out and
+content-addressing rules as any other value.
+
+**Equality.** `find`, `contains` and `without` use the structural equality of
+`==` (§8). The needle must conform to the element type: `int` into `[float]`
+is allowed by the existing widening rule, `float` into `[int]` is not, and
+`bool` is not an `int`. `find` is structural only — it finds a whole equal
+element, not a record by one of its fields.
+
+**Absence.** An absent argument makes the whole built-in call absent; the
+binding then drops or blocks as usual (§10). Absence is reported before the
+call, so a built-in is only ever evaluated over present values. This follows the
+record/list-source rule, not the arithmetic rule. `find` and `at` return
+`None` as a **present** value when there is no match; their result is `T?` /
+`int?`, and `None` is legal only in a `?` position. `at` with a `None` index
+returns `None`; `remove_at` with a `None` index returns the list unchanged.
+`None` where a non-optional `T` or `[T]` is expected is a runtime error.
+
+**Secrets.** `append`, `concat`, `remove_at`, `at` and `length` only transport
+or address values; a `secret` element stays wrapped and is redacted wherever
+observed (§4.2). `find`, `contains` and `without` compare values, so a
+`secret` anywhere in a compared value — the list, the needle, or a nested
+record/choice field — is an error. When the element type is statically known
+this is a load-time error; otherwise it is a runtime error that aborts the Run.
+
+**Bounds.** An index is a non-negative `int` (or `None` where the signature
+allows it); `bool` is not an `int`. An out-of-range index yields `None` from
+`at` and the unchanged list from `remove_at`.
+
+**Positions.** Built-ins are accepted wherever a **source** is accepted — a
+step or sink `in:` binding, a composite `out:` binding, a leaf of a record, map
+or list source, and a guard or `when` expression. They are **not** accepted in
+`config`, which stays literal data. A built-in takes positional arguments only;
+a named argument is an error. An unknown `list::<name>` or `map::<name>` is a
+load-time error.
+
+### 8.2 Maps
+
+A map is a value with a data-determined set of **text keys** and **one value
+type**: `map(text, V)`. The key type must resolve to `text`. A map is a JSON
+object at every external boundary, and an empty structure conforms to any map.
+
+```
+type Labels = map(text, text)
+type Counts = map(text, int)
+```
+
+A map literal uses quoted keys, inline or indented:
+
+```fct
+in:
+  labels: { "team": "platform", "owner": start.ticket.assignee }
+```
+
+```fct
+config:
+  labels:
+    "team":  "platform"
+    "owner": "platform"
+```
+
+Keys are **string literals**; duplicate keys are a load-time error; values are
+sources (literal data in `config`). An absent value makes the whole map absent.
+`{}` is the empty structure and conforms to a map or a record. A computed key is
+built with `map::with`, not written in a literal.
+
+**Static access.** `m.key` is a path into the map: any segment names a text key
+and yields `V`. A key that is not present is **absence**, so the
+binding drops or blocks as usual; a present key whose value is `None` (under
+`map(text, T?)`) yields `None`. A key that cannot be written as a path segment
+(one containing a dot or a space) is read with `map::at`.
+
+**Dynamic access and operations.** The reserved `map` namespace provides the
+same kind of pure, positional built-ins as `list::*`, with the same positions,
+absence rule and config restriction (§8.1):
+
+| built-in | signature | meaning |
+| --- | --- | --- |
+| `map::has(m, key)` | `(map(text,V), text) -> bool` | whether `key` is present (even with a `None` value) |
+| `map::at(m, key)` | `(map(text,V), text) -> V?` | the value, or `None` if absent |
+| `map::length(m)` | `(map(text,V)) -> int` | number of entries |
+| `map::keys(m)` | `(map(text,V)) -> [text]` | all keys, sorted lexicographically |
+| `map::values(m)` | `(map(text,V)) -> [V]` | all values, in sorted-key order |
+| `map::with(m, key, value)` | `(map(text,V), text, V) -> map(text,V)` | a new map with `key` set/replaced |
+| `map::without(m, key)` | `(map(text,V), text) -> map(text,V)` | a new map without `key` (missing = unchanged) |
+| `map::merge(a, b)` | `(map(text,V), map(text,V)) -> map(text,V)` | a new map; `b` wins on duplicate keys |
+
+`map::at` is **total**: a missing key is a present `None`, not absence. This is
+the same split as `list::at` (out of range is `None`) versus `xs.0` (a path into
+a list, which is absent). Use `map::has` when the two must be distinguished.
+`map::keys` and `map::values` are deterministic: sorted by key.
+
+Every map built-in is **pure** — it returns a new map/list and never changes its
+input. No map built-in compares values: `has`, `keys`, `without` and `merge`
+address keys (text); `at`, `values` and `with` transport values, so a `secret`
+value stays wrapped and is redacted wherever observed (§4.2). A non-text key is
+a load-time error when known and a runtime abort otherwise. `None` is legal only
+where the value type is optional.
 
 Lexical rules:
 
@@ -796,8 +1080,9 @@ Lexical rules:
   `factory-vm:base` and `i::JiraTicket` intact.
 - `file "<path>"` reads a file relative to the module, wherever a value is
   accepted.
-- Values may be **structured**: records (`{ … }` or an indented block) and lists
-  (`[…]` or indented `-` items), nested freely.
+- Values may be **structured**: records (`{ … }` or an indented block), maps
+  (quoted keys, inline or an indented block) and lists (`[…]` or indented `-`
+  items), nested freely.
 - A field or record entry may be **typed**: `name: SomeType = value`. The value
   must **conform structurally** to the type (checked at load). Types therefore
   describe config values as well as ports — that is how authors name their own
@@ -809,8 +1094,11 @@ Lexical rules:
   `factory-vm:base`).
 - **Structural keys are reserved** inside a block: `kind`, `extends`, `runner`,
   `use`, `in`, `out`, `when`, `config`, `final` and `step` are interpreted
-  structurally and cannot be used as config field names. The binding marker
-  **`prev`** is reserved too: a port or binding may not be named `prev` (§10.1).
+  structurally and cannot be used as config field names. The binding markers
+  **`prev`** and **`then`** are reserved too: a port or binding may not be named
+  `prev` (§10.1) or `then`. **`list` and `map`** are reserved namespaces: a
+  module may not be imported as either, and a declaration may not be named
+  either (§8.1, §8.2).
 
 Notes:
 
@@ -904,6 +1192,19 @@ binding may not name a node in another scope. This is what makes an effect
 *inside* a loop's scope fire on every pass, while an effect *downstream of the
 scope* fires once per invocation of that scope (here, once — §10.2).
 
+**Checkpointing is invisible.** A firing is atomic in its *observable* effect,
+not in its duration: an implementation may record a firing's progress and resume
+it after a crash. Resumption must be unobservable — a resumed Run yields the same
+boundary values, fires the same sinks the same number of times, and does not fire
+again a node whose firing already completed. Node identity in such a Run is
+derived from the factory and the firing's position, never from a random id, and
+an external effect must be idempotent under that identity. A Run's scheduler
+position is a function of its recorded firings, so a persisted cursor is a
+derived checkpoint, not a second source of truth. A value the record cannot
+reproduce — a `secret` is redacted (§4.2) — is not part of that position: it must
+be re-resolved by its port or held in protected implementation state, and a
+resumed Run must not re-fire a completed node to obtain it.
+
 - **Triggers fire once, at admission.** A Run begins when its trigger fires: the
   host supplies the trigger's `out` values (the **seed**), which are checked at
   admission (§4, §11) and then held constant for the whole Run. The trigger
@@ -916,9 +1217,10 @@ scope* fires once per invocation of that scope (here, once — §10.2).
   has a false guard. A **false guard disables the node** for that pass — it does
   not fire, and that is how a loop terminates. A `prev` binding is inactive on
   the node's first firing and gates from the second (below), so it never prevents
-  the first firing. A binding whose source is absent is **dropped** without
-  gating: an optional (`?`) or undeclared input that is unsatisfied simply does
-  not constrain the node.
+  the first firing; a seeded `prev` contributes its seed on that firing, and its
+  guard is likewise inactive then. A binding whose source is absent is **dropped**
+  without gating: an optional (`?`) or undeclared input that is unsatisfied simply
+  does not constrain the node.
 - **Sink enablement.** A sink may appear in any scope (§7) and fires within that
   scope's fixpoint: a sink inside a loop's scope fires on each pass, one
   downstream of the scope fires once (§10.2). A sink fires when its `when` holds,
@@ -946,23 +1248,27 @@ scope* fires once per invocation of that scope (here, once — §10.2).
   supplies a value for an input, whose other inputs must still be present.
 - **`prev` bindings are loop-carried.** A binding marked **`prev`** is inactive
   until its node has fired, then an ordinary binding; every unmarked binding
-  gates from the start, and declaration order never affects gating. A `prev`
-  binding may reference the node itself (a **self-loop**). §10.1 defines the
-  marker, its shape, and the loop invariant.
+  gates from the start, and declaration order never affects gating. A seeded
+  `prev` supplies its seed on that first firing, and its guard gates only from
+  the second. A `prev` binding may reference the node itself (a **self-loop**).
+  §10.1 defines the marker, its shape, and the loop invariant.
 - **Absent drops; false gates.** An absent `?` or undeclared source drops its
   binding and does not gate the node. A *present* source with a false guard
-  disables the node (above). An input is required unless marked `?` on the
-  binding (`name?: source`) or declared `?` on the unit's port; a `prev` input
-  is required only from the node's second firing.
+  disables the node (above), except on a seeded `prev`'s first firing (§10.1).
+  An input is required unless marked `?` on the binding (`name?: source`) or
+  declared `?` on the unit's port; a `prev` input is required only from the
+  node's second firing.
 - **Sequential vs parallel is implicit** — there is no `seq` / `par` keyword.
   A binding between two nodes **orders** them; no binding means they **may** run
   concurrently.
 - **A guard is a dependency.** The sibling nodes a **guard** (`if`, or a sink's
   `when`) references are dependencies exactly like binding sources: they **order**
   the node — it waits for them — and their firings make it **fresh** (it
-  re-fires). So `x: a.x if b.flag` depends on both `a` and `b`. A guard reference
-  to the node's **own** name is not a dependency: it reads the node's own latest
-  outputs, and a self-loop is expressed by marking a source `prev` (§10.1).
+  re-fires). So `x: a.x if b.flag` depends on both `a` and `b`. A guard on a
+  `prev` binding is inactive on the node's first firing, like the binding itself
+  (§10.1). A guard reference to the node's **own** name is not a dependency: it
+  reads the node's own latest outputs, and a self-loop is expressed by marking a
+  source `prev` (§10.1).
 - **Ordering is data-mediated.** To order a step after another without consuming
   its value, thread `terminated_at` (or any value). Every dependency carries a
   value (a guard reads one). A skipped step has no `terminated_at`, so ordering
@@ -970,8 +1276,9 @@ scope* fires once per invocation of that scope (here, once — §10.2).
 - **Loops and retries.** A loop is a **scope whose graph contains a cycle**
   closed by a `prev` edge — there is no seed primitive and no `while`/`for`; the
   scope still runs to quiescence and yields its `out` once. The `prev` edge is
-  inactive on the first pass, so the loop starts; from the second pass it gates
-  on its producer and re-fires the node each time that producer fires. A loop is
+  inactive on the first pass, so the loop starts — or, when seeded, contributes
+  its seed there with the guard skipped; from the second pass it gates on its
+  producer and re-fires the node each time that producer fires. A loop is
   **bounded by a guard that disables a node when the budget is reached**:
   attempts while under budget, the exhausted branch once the guard turns false.
   The budget is the loop node's own firing count, **`attempt`** (§5): e.g.
@@ -1001,6 +1308,15 @@ scope* fires once per invocation of that scope (here, once — §10.2).
   (the record stays open, §12). That is how a failure sink reports the abort; no
   built-in failure sink is required. The bound is the implementation's choice
   (§11).
+- **Operator abort.** A deployment may stop a Run outside the factory's own
+  dataflow — an operator, an API client, a timeout. A started Run aborts exactly
+  as a system error does: the abort source carries the operator's reason in
+  `reasons`, the abort pass fires **sinks only**, and no further node is
+  enabled. A Run that has not started ends immediately and **without an abort
+  pass** — no effect has run, so there is nothing to report — and is recorded
+  **aborted**. Stopping is idempotent: a Run that already finished keeps its
+  outcome. An effect already executing is not interrupted; it finishes and its
+  result is recorded.
 - **Outcome.** A `done` Run's outcome is the **set of distinct sinks that fired**
   (in any scope; unordered). A sink may fire more than once — a sink downstream of a
   loop fires on each pass — and every firing is a separate step (its own
@@ -1033,23 +1349,41 @@ step plan:
 ```
 
 - **Syntax.** `prev` prefixes the binding name: `prev name: [Type =] source
-  [if guard]`. It is valid only on a **step input** (`in:`), never on an `out:`
-  binding or a sink binding. `prev` is a **reserved word**: a port or binding may
-  not be named `prev`, so a leading `prev` is always the marker (§8).
+  [if guard]`. A `prev` binding may instead **seed** its first firing: `prev
+  name: Type = seed then source [if guard]`. It is valid only on a **step input**
+  (`in:`), never on an `out:` binding or a sink binding. `prev` and `then` are
+  **reserved words**: a port or binding may not be named `prev` or `then`, so a
+  leading `prev` is always the marker and `then` is always the seed separator
+  (§8).
 - **Meaning.** A `prev` binding is **inactive until its node has fired**. On the
-  node's first firing it contributes no value and does not gate, so it cannot
-  prevent that first firing. From the second firing on it is an ordinary binding:
+  node's first firing it contributes no value and does not gate (a seeded binding
+  contributes its seed instead), so it cannot prevent that first firing. From the
+  second firing on it is an ordinary binding:
   an absent required source leaves the node not enabled, and a present source
   with a false guard disables the node — that is how a loop ends. Declaration
   order never affects this; it is presentation only.
+- **Seed.** A seeded `prev` binding contributes its **seed** on the first firing
+  instead of being inactive, so the loop has a first value to build on. The seed
+  is literal data (`value`, §8) — a literal, `file`, list, record or arithmetic
+  over those — with no path or external-port call, so it creates no dependency
+  and never gates on another node. It must conform to the declared `Type`, which
+  is therefore required in the seeded form. A guard on the binding does not gate
+  the first firing; it gates from the **second**, exactly as an unseeded `prev`
+  cannot prevent the first firing. (To skip the first pass on a condition, use a
+  forward binding, not the `prev` guard.) From the second firing the binding is
+  an ordinary `prev` edge. Seeding is how a loop accumulates a list from its
+  first pass.
 - **Shape.** A `prev` binding's source must reference **exactly one sibling node**
-  (or the node itself), possibly wrapped in arithmetic over constants, e.g.
-  `prev n: loop.n + 1`. It may not reference two different siblings or a call.
+  (or the node itself), possibly wrapped in arithmetic or a **pure core built-in**
+  (§8.1) over that one sibling and constants, e.g. `prev n: loop.n + 1` or
+  `prev n: list::length(loop.seen) + 1`. It may not reference two different
+  siblings or an external-port call. A seed contains no references at all.
 - **Loop invariant.** The bindings **not** marked `prev` must form a DAG, and
   every `prev` binding must lie on a cycle (a self-loop counts) — the §11 rule,
   restated here. A cycle with no `prev` edge, or a `prev` edge not on a cycle, is
-  a spec error. Because a `prev` binding is inactive on the first firing, the
-  cycle can be entered; thereafter the producer's firing re-fires the consumer.
+  a spec error. Because a `prev` binding is inactive (or seeded, with its guard
+  skipped) on the first firing, the cycle can be entered; thereafter the
+  producer's firing re-fires the consumer.
 
 ### 10.2 Worked examples: a retry loop, and the abort pass
 
@@ -1160,26 +1494,35 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
   sibling step),
   the first segment names a declared port on that node (`terminated_at` and
   `attempt` are implicit on every trigger/step and take no subfields), and each
-  further segment resolves against the port's declared type (record field, numeric
-  list index, or choice tag). `abort` guarantees `reasons: [text]` and otherwise
+  further segment resolves against the port's declared type (record field, map
+  key, numeric list index, or choice tag). A map key is any segment: the key set
+  is not declared. `abort` guarantees `reasons: [text]` and otherwise
   accepts any segments (shape open); `this` is
   the closed record `{ metadata: { run: { id: text }, node: { id: text }, step: { id: text } } }`.
   An external-port call binds exactly
   its declared params. Anything else is a spec error at load time; the only
   runtime absence is a declared optional (`?`) port left unproduced.
+- A list or map built-in names one of the closed sets (§8.1, §8.2), takes
+  exactly its declared positional arguments, and its arguments and result follow
+  the signature. A statically known mismatch — a non-list/non-map argument, an
+  ill-typed needle, index, key or value — is a spec error. An equality-requiring
+  list built-in (`find`, `contains`, `without`) is a spec error when its element
+  type contains `secret`; no map built-in compares values.
+- A seeded `prev` binding declares its `Type`, the seed conforms to that type,
+  and the seed contains no path or external-port call (§10.1).
 - Gating is explicit: within a scope, a binding's dependencies
   are the sibling nodes its **source** and its **guard** reference (a guard's
   reference to the node's own name is not a dependency); the bindings **not**
   marked `prev` form a directed acyclic graph, and every `prev` binding lies on a
-  cycle (a self-loop counts) — a `prev` binding being inactive until its node has
-  fired. A cycle with no `prev` edge, or a `prev` edge not on a cycle, is a spec
-  error.
+  cycle (a self-loop counts) — a `prev` binding being inactive (or seeded, with
+  its guard skipped) on its node's first firing. A cycle with no `prev` edge, or
+  a `prev` edge not on a cycle, is a spec error.
 - A binding's optional `name: Type = source` annotation is an upper bound: the
   source's type must conform to it and (for a referenced step) it must conform to
   the unit's declared port type.
 - A required `out:` (no `?`) bound to a possibly-absent source — a port of a
-  step that may not fire, or navigation through a declared-optional field —
-  is a spec error (make it `?` or add a covering branch). Bare `out:` ports
+  step that may not fire — is a spec error (make it `?` or add a covering
+  branch). A record field is never absent: an optional field is a `none` value. Bare `out:` ports
   (no `=`) are exposed with open subsetting semantics — what supplies them is
   still open (§12) — and are not coverage-checked.
 
@@ -1187,7 +1530,13 @@ be replayed and checked. Conformance is a *runtime* check. This is reproducible
 
 - Further operators: arithmetic (`+ - * / %`) is specified; bitwise, string
   concatenation and other operators are not.
-- Run status, cancellation and resume.
+- A `bytes` primitive: raw bytes are deliberately not represented (§4). Binary
+  work runs in a VM-based runner step instead; add a byte type only if a clear
+  need appears that route cannot serve.
+- Collection operations beyond the core `list::` and `map::` sets (§8.1–§8.2):
+  comprehensions, `map`/`filter`, predicate or keyed `find`, and text/set
+  operations.
+- Run status and resume.
 - Provider registry API (how adapters are registered and resolved, how a kind
   declares the **schema of a block's `config`** — the §6.3 closure — and whether
   an open-output kind is **generative**, §6.4, and so which port types it
@@ -1461,6 +1810,83 @@ sink aborted:
 
 ## Changelog
 
+- **v1.35** — **configuration values and optional port parameters.** A
+  `config(key: text, default?: text) -> text` external port reads a deployment's
+  **configuration value** at the Run's tenant scopes (factory → user →
+  organization, as §4.3), with a deployment-wide tier allowed below them. The
+  value is `text`, not `secret`: it may be compared, reported, written to a file
+  and edited. A missing key returns the default, or fails the step when no
+  default is given. External-port parameters may now be optional
+  (`name?: Type`): a call may omit one, and an omitted argument is not passed to
+  the implementation.
+
+- **v1.34** — **callbacks are expressions.** `list::map(xs, x -> body)` applies
+  a callback expression to every element. The parameter is typed by the
+  element, the body is pure (no external-port calls), captures outer sources,
+  and the callback can appear only in a built-in's callback position — it is
+  not a function value. `list::compact(xs)` drops the `none` elements of a
+  `[T?]` and returns `[T]`.
+
+- **v1.33** — **absence is a probe, `T?` is an option, and records are total.**
+  `Absence` is the evaluator's report that no value is available here: it is not
+  a value, cannot be stored or bound, and a node's port map omits an absent
+  port. `T?` is typed as `some(T) | none` with a canonical null encoding; `?.`
+  navigates an option, plain `.` on one is an error, `is some` / `is none`
+  branch, and `opt::value(x)` unwraps. Nested options flatten, an option is not
+  a boolean, and `some` / `none` are reserved choice-tag names. `name?: T` is
+  sugar for `name: T?`: an omitted optional key decodes to `none`. Every typed
+  boundary is strict — a missing required key is an error at admission, binding
+  and production — while an absent producer is still absence.
+
+- **v1.32** — **credentials never come from the environment.**
+  `credential(key)` resolves only from the stored scopes — **factory → user →
+  organization**, narrowest first. The `FCT_CREDENTIAL_<KEY>` fallback is gone:
+  the environment is global, not tenant-scoped, so a key there could leak a
+  credential across tenants. No deployment path — API, worker or local CLI —
+  reads it.
+- **v1.31** — **no byte type.** Raw bytes are deliberately not represented:
+  dotFactory is a control plane, so its values are configuration, events and
+  results. Binary work — uploading an artifact to S3, say — runs in a VM-based
+  runner step with a real filesystem, not through a binding; a `bytes` primitive
+  stays deferred, additive if a clear need appears (§4, §12).
+- **v1.30** — **a seeded `prev`'s guard gates from the second firing.** A seed is
+  the loop's bootstrap, so the first firing contributes it unconditionally,
+  exactly as an unseeded `prev` cannot prevent the first firing. A guard on the
+  binding gates from the second firing; a loop-exit guard that names the feedback
+  producer (e.g. `review.verdict is rejected`) therefore no longer deadlocks a
+  seeded loop. To skip the first pass on a condition, use a forward binding
+  instead.
+- **v1.29** — **maps.** A first-class `map(text, V)` type: text keys, one value
+  type, structural conformance, JSON-object boundaries. Map literals use quoted
+  keys (`{ "team": "platform" }`); `m.key` is a path lookup (a missing key is
+  absence), while the reserved `map::` built-ins provide `has`, `at`, `length`,
+  `keys`, `values`, `with`, `without` and `merge` — pure and positional like
+  `list::*`, with `map::at` returning `None` for a missing key. Maps replace on
+  `extends`; secrets nested in a map are redacted as for any container.
+- **v1.28** — **list built-ins, and a seed for `prev`.** The core provides a
+  closed set of pure list operations in a reserved `list::` namespace:
+  `append`, `concat`, `without`, `remove_at`, `find`, `contains`, `at` and
+  `length`, with positional arguments (§8.1). They are immutable — each returns
+  a new list — typed over `[T]`, propagate absence, preserve `secret` wrappers,
+  and reject a secret in an equality comparison. `find` returns an index
+  (`int?`); `at` and `remove_at` accept `int?` so they compose with it. A `prev`
+  binding may declare a first-firing **seed**:
+  `prev seen: [T] = [] then source` (§10.1), which lets a loop accumulate a
+  list from its first pass. `list` and `then` join the reserved words; config
+  remains literal data.
+- **v1.27** — **a sink firing carries its execution identity.** The engine gives
+  a sink adapter the same opaque ids a `this` binding exposes (`run.id`,
+  `node.id`, `step.id`) plus the factory digest. An adapter that writes an
+  externally visible artifact can stamp them on it — an S3 object's user
+  metadata, say — so a listener can detect that the object was produced by the
+  factory's own effect and avoid re-admitting it in a feedback loop. Factories
+  still see only the `this` record; the extra seal is the adapter's.
+- **v1.26** — **a Run can be stopped by the operator.** A deployment may abort a
+  started Run on request: it aborts like a system error, with the operator's
+  reason in `abort.reasons`, the abort pass, and no further work. A Run stopped
+  before it started ends immediately, with no abort pass and no effects.
+  Stopping is idempotent; a finished Run keeps its outcome. Cancellation is no
+  longer deferred (§12).
 - **v1.25** — **runner interfaces are explicit, and outputs are fixed or open.**
   Every runner declares `in:` and `out:`, each a type or the keyword `open`; an
   omitted side is a spec error (no implicit default). A typed `out:` is a
