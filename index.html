@@ -416,11 +416,12 @@
   <!-- ================= THE SHAPE / VOCAB ================= -->
   <section id="shape">
     <div class="wrap">
-      <p class="kicker">The whole vocabulary</p>
+      <p class="kicker">The core vocabulary</p>
       <h2>Eight concepts. No spare parts.</h2>
       <p class="lede narrow">
         Every idea earns its place by being needed to describe how work flows
-        through a graph. This is the entire language.
+        through a graph. This is the core of the language; the rest is data,
+        built-ins and host adapters.
       </p>
       <div class="vocab">
         <div class="vcard">
@@ -720,9 +721,9 @@ sink save:
         <div style="text-align:center;color:var(--faint);font-size:1.4rem">↔</div>
         <div class="hostbox">
           <ul>
-            <li><strong>Local</strong> — docker containers &amp; the OpenCode server</li>
-            <li><strong>Cloudflare</strong> — workers as steps, R2 as sink</li>
-            <li><strong>AWS / GCP</strong> — Lambda/Batch steps, SQS triggers</li>
+            <li><strong>Local</strong> — the reference host: containers &amp; OpenCode</li>
+            <li><strong>Cloudflare</strong> — workers as steps, R2 as a sink (adapter)</li>
+            <li><strong>AWS / GCP</strong> — Lambda/Batch steps, SQS triggers (adapter)</li>
             <li><strong>Your own</strong> — register the kinds your domain needs</li>
           </ul>
         </div>
