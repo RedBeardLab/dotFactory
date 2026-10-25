@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The page's anatomy is a real factory from the reference repository.
+      - uses: actions/checkout@v4
+        with:
+          repository: RedBeardLab/factory
+          path: factory
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv python install 3.14
+
+      - name: Validate the page's factory
+        working-directory: factory
+        run: |
+          uv sync --frozen
+          uv run python -m fct validate examples/github/reply.fct
+          uv run python -m fct sinks examples/github/reply.fct
+
+      - name: The page matches the validated factory
+        run: python3 scripts/check_index_example.py index.html factory/examples/github/reply.fct
