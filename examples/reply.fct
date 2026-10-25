@@ -1,0 +1,82 @@
+# A GitHub issue, answered by an agent — with a review loop and a real effect.
+#
+#   issue_opened ──▶ reply ──────────────────▶ comment
+#   trigger          loop (draft ⇄ review)        sink
+#                    └─ progress (each pass)
+#
+# `draft` writes a reply; `review` approves it or sends it back. The `prev`
+# edge re-fires `draft` with the reviewer's text while it is not approved and
+# under three attempts. `progress` sits inside the loop, so it fires on every
+# pass; `comment` sits downstream and posts the final text once.
+#
+#   uv run python -m fct validate examples/github/reply.fct
+#   uv run python -m host check   --factory examples/github/reply.fct
+#
+# The deployment supplies the `opencode` credential (spec §4.3) and the GitHub
+# App behind `github_token`. The `github` trigger, `github_issue` sink and
+# `github_token` port are implemented by the reference host.
+
+import "types" as gh
+
+external port credential(key: text) -> secret
+external port github_token(repo: text) -> secret
+
+type AgentCall = { token: secret, prompt: text }
+
+runner agent:
+  kind: opencode
+  in:   AgentCall
+  out:  open
+
+trigger issue_opened:
+  kind: github
+  config: gh::GithubConfig = {
+    path:   "/api/github/webhook"
+    target: { one: { repo: "acme/widgets" } }
+    event:  issues
+  }
+  out:
+    issue:      gh::Issue
+    repository: gh::Repository
+    action:     gh::GithubIssueAction
+    sender:     text
+
+loop reply:
+  in:  { issue: gh::Issue }
+  out: { body: text = review.body }
+
+  step draft:
+    runner: agent
+    in:
+      token: credential(key: "opencode")
+      prompt: "Draft a reply. Return only the reply text."
+      title: in.issue.title
+      body:  in.issue.body
+      prev feedback: review.body if not review.approved and draft.attempt < 3
+    out: { body: text }
+
+  step review:
+    runner: agent
+    in:
+      token: credential(key: "opencode")
+      prompt: "Review the draft. Return ready and the final text."
+      text: draft.body
+    out: { approved: bool, body: text }
+
+  sink progress:
+    kind: file
+    config: { path: "out/reply-progress.json" }
+    in: { attempt: draft.attempt, body: draft.body }
+
+step post:
+  use: reply
+  in: { issue: issue_opened.issue }
+
+sink comment:
+  kind: github_issue
+  config: { action: "comment" }
+  in:
+    token:  github_token(repo: issue_opened.repository.name)
+    repo:   issue_opened.repository.name
+    number: issue_opened.issue.number
+    body:   post.body

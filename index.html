@@ -491,7 +491,7 @@
       </p>
       <p class="note" style="margin-top:-.2rem">
         The real file:
-        <a href="https://github.com/RedBeardLab/factory/blob/main/examples/github/reply.fct">examples/github/reply.fct</a>.
+        <a href="https://github.com/RedBeardLab/dotFactory/blob/main/examples/reply.fct">examples/reply.fct</a>.
         It passes <code>fct validate</code> and <code>fct sinks</code>.
       </p>
 
@@ -507,7 +507,7 @@
 
       <div class="anatomy">
         <div class="codebox">
-          <div class="bar"><i></i><i></i><i></i><span style="margin-left:.5rem">reply.fct</span><span style="margin-left:auto;color:#8b95a5;font-size:.72rem">scroll ↕</span><a href="https://github.com/RedBeardLab/factory/blob/main/examples/github/reply.fct" style="color:#8b95a5;font-size:.72rem;margin-left:.8rem">source ↗</a></div>
+          <div class="bar"><i></i><i></i><i></i><span style="margin-left:.5rem">reply.fct</span><span style="margin-left:auto;color:#8b95a5;font-size:.72rem">scroll ↕</span><a href="https://github.com/RedBeardLab/dotFactory/blob/main/examples/reply.fct" style="color:#8b95a5;font-size:.72rem;margin-left:.8rem">source ↗</a></div>
           <div class="code" id="code" tabindex="0" aria-label="reply.fct source, scroll to read">
             <div class="cl" data-stage="types"><span class="ln"> 1</span><span class="kw">import</span> <span class="st">&quot;types&quot;</span> <span class="kw">as</span> gh</div>
             <div class="cl"><span class="ln"> 2</span></div>
@@ -602,7 +602,7 @@
           <pre>labels: [<span class="ty">text</span>] = <span class="fn">list::map</span>(
   in.issue.labels, l -&gt; l.name
 )</pre>
-          <a class="more" href="https://github.com/RedBeardLab/factory/blob/main/examples/lists/factory.fct">examples/lists/factory.fct ↗</a>
+          <a class="more" href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md#81-list-built-ins">the spec: lists ↗</a>
         </article>
         <article class="fcard">
           <div class="head"><span class="glyph g-bind">#</span><h3>Maps</h3><span class="ver">v1.29</span></div>
@@ -610,7 +610,7 @@
           <pre><span class="kw">type</span> Labels = <span class="ty">map</span>(<span class="ty">text</span>, <span class="ty">text</span>)
 team:  <span class="ty">text</span> = labels.team
 owner: <span class="ty">text</span>? = <span class="fn">map::at</span>(labels, <span class="st">"owner"</span>)</pre>
-          <a class="more" href="https://github.com/RedBeardLab/factory/blob/main/examples/maps/factory.fct">examples/maps/factory.fct ↗</a>
+          <a class="more" href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md#82-maps">the spec: maps ↗</a>
         </article>
         <article class="fcard">
           <div class="head"><span class="glyph g-loop">?</span><h3>Options and absence</h3><span class="ver">v1.33</span></div>
@@ -620,7 +620,7 @@ owner: <span class="ty">text</span>? = <span class="fn">map::at</span>(labels, <
 sink save:
   <span class="kw">when</span>: start.issue.milestone <span class="kw">is</span> some
   <span class="kw">in</span>: { text: <span class="fn">opt::value</span>(start.issue.milestone) }</pre>
-          <a class="more" href="https://github.com/RedBeardLab/factory/blob/main/examples/absence/factory.fct">examples/absence/factory.fct ↗</a>
+          <a class="more" href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md#41-none-and-absence">the spec: options ↗</a>
         </article>
         <article class="fcard">
           <div class="head"><span class="glyph g-port">⚙</span><h3>Configuration</h3><span class="ver">v1.35</span></div>
@@ -629,13 +629,12 @@ sink save:
   key: <span class="st">"agent.model"</span>,
   default: <span class="st">"opencode-go/deepseek-v4.1-flash"</span>
 )</pre>
-          <a class="more" href="https://github.com/RedBeardLab/factory/blob/main/.fct/factory.fct">.fct/factory.fct ↗</a>
+          <a class="more" href="https://github.com/RedBeardLab/dotFactory/blob/main/dotFactory.md#44-deployment-configuration">the spec: config ↗</a>
         </article>
       </div>
       <p class="note">
-        Short excerpts from the factories under
-        <a href="https://github.com/RedBeardLab/factory/tree/main/examples">examples/</a>;
-        the anatomy above is the complete file.
+        Short excerpts from the validated factories; the anatomy above is the
+        complete file.
       </p>
     </div>
   </section>
