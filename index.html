@@ -556,7 +556,7 @@
             <div class="cl" data-stage="steps"><span class="ln">45</span>      text: draft.body</div>
             <div class="cl" data-stage="steps"><span class="ln">46</span>    <span class="kw">out</span>: { approved: <span class="ty">bool</span>, body: <span class="ty">text</span> }</div>
             <div class="cl"><span class="ln">47</span></div>
-            <div class="cl" data-stage="sinks loop"><span class="ln">48</span>  <span class="kw">sink</span> progress:</div>
+            <div class="cl" data-stage="sinks loop"><span class="ln">48</span>  <span class="kw">step</span> progress:</div>
             <div class="cl" data-stage="sinks loop"><span class="ln">49</span>    <span class="kw">kind</span>: <span class="st">file</span></div>
             <div class="cl" data-stage="sinks loop"><span class="ln">50</span>    <span class="kw">config</span>: { path: <span class="st">&quot;out/reply-progress.json&quot;</span> }</div>
             <div class="cl" data-stage="sinks loop"><span class="ln">51</span>    <span class="kw">in</span>: { attempt: draft.attempt, body: draft.body }</div>
@@ -565,7 +565,7 @@
             <div class="cl" data-stage="loop"><span class="ln">54</span>  <span class="kw">use</span>: reply</div>
             <div class="cl" data-stage="loop trigger"><span class="ln">55</span>  <span class="kw">in</span>: { issue: issue_opened.issue }</div>
             <div class="cl"><span class="ln">56</span></div>
-            <div class="cl" data-stage="sinks"><span class="ln">57</span><span class="kw">sink</span> comment:</div>
+            <div class="cl" data-stage="sinks"><span class="ln">57</span><span class="kw">step</span> comment:</div>
             <div class="cl" data-stage="sinks"><span class="ln">58</span>  <span class="kw">kind</span>: <span class="st">github_issue</span></div>
             <div class="cl" data-stage="sinks"><span class="ln">59</span>  <span class="kw">config</span>: { action: <span class="st">&quot;comment&quot;</span> }</div>
             <div class="cl" data-stage="sinks"><span class="ln">60</span>  <span class="kw">in</span>:</div>

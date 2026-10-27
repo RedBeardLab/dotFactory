@@ -1,7 +1,7 @@
 # A GitHub issue, answered by an agent — with a review loop and a real effect.
 #
 #   issue_opened ──▶ reply ──────────────────▶ comment
-#   trigger          loop (draft ⇄ review)        sink
+#   trigger          loop (draft ⇄ review)        kind step
 #                    └─ progress (each pass)
 #
 # `draft` writes a reply; `review` approves it or sends it back. The `prev`
@@ -13,7 +13,7 @@
 #   uv run python -m host check   --factory examples/github/reply.fct
 #
 # The deployment supplies the `opencode` credential (spec §4.3) and the GitHub
-# App behind `github_token`. The `github` trigger, `github_issue` sink and
+# App behind `github_token`. The `github` trigger, `github_issue` step and
 # `github_token` port are implemented by the reference host.
 
 import "types" as gh
@@ -63,7 +63,7 @@ loop reply:
       text: draft.body
     out: { approved: bool, body: text }
 
-  sink progress:
+  step progress:
     kind: file
     config: { path: "out/reply-progress.json" }
     in: { attempt: draft.attempt, body: draft.body }
@@ -72,7 +72,7 @@ step post:
   use: reply
   in: { issue: issue_opened.issue }
 
-sink comment:
+step comment:
   kind: github_issue
   config: { action: "comment" }
   in:
