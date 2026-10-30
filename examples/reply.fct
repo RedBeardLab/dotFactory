@@ -50,8 +50,8 @@ loop reply:
     in:
       token: credential(key: "opencode")
       prompt: "Draft a reply. Return only the reply text."
-      title: in.issue.title
-      body:  in.issue.body
+      title: inputs.issue.title
+      body:  inputs.issue.body
       prev feedback: review.body if not review.approved and draft.attempt < 3
     out: { body: text }
 
